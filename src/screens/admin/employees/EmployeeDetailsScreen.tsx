@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -6,6 +6,8 @@ import {
   Dimensions,
   Image,
   Linking,
+  Modal,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -17,13 +19,14 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useIsFocused } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import GradientScreen from "../../../components/layout/GradientScreen";
 import { APP_COLORS } from "../../../theme/appTheme";
 import { supabase } from "../../../services/supabase";
 
-const { width } = Dimensions.get("window");
+const { width, height } = Dimensions.get("window");
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface AttendanceRecord {
@@ -32,6 +35,8 @@ interface AttendanceRecord {
   created_at: string;
   check_in: string | null;
   check_out: string | null;
+  check_in_selfie?: string | null;
+  check_out_selfie?: string | null;
   status?: "present" | "absent" | "late" | "half_day" | "on_leave";
   working_hours?: number;
 }
@@ -117,7 +122,6 @@ function workingHours(record: AttendanceRecord): number {
 }
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
-
 function StatPill({
   icon,
   value,
@@ -176,13 +180,26 @@ function InfoItem({
 
 // ─── MAIN SCREEN ──────────────────────────────────────────────────────────────
 export default function EmployeeDetailsScreen({ route }: any) {
-  const navigation = useNavigation();
-  const { employee } = route.params;
+  const navigation = useNavigation<any>();
+  const isFocused = useIsFocused();
+  const [employee, setEmployee] = useState(route.params.employee);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "attendance">(
     "overview",
   );
+
+  // Options states
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState(new Date());
+  const [optionsMenuVisible, setOptionsMenuVisible] = useState(false);
+
+  // Log sheets states
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(
+    null,
+  );
+  const [detailsVisible, setDetailsVisible] = useState(false);
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -196,6 +213,50 @@ export default function EmployeeDetailsScreen({ route }: any) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  // ── Fetch Profile & Attendance ──────────────────────────────────────────
+  const fetchEmployeeData = async () => {
+    try {
+      setLoading(true);
+
+      // Sync fresh profile data to reflect runtime edits smoothly
+      const profileQuery = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", employee.id)
+        .single();
+
+      if (profileQuery.data) {
+        setEmployee(profileQuery.data);
+      }
+
+      const attendanceQuery = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("employee_id", employee.id)
+        .order("created_at", { ascending: false });
+
+      setAttendance(attendanceQuery.data || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isFocused) {
+      fetchEmployeeData();
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
   // ── Stats derived ────────────────────────────────────────────────────────
   const stats = attendance.reduce(
@@ -220,39 +281,20 @@ export default function EmployeeDetailsScreen({ route }: any) {
       ? Math.round(((stats.present + stats.late) / attendance.length) * 100)
       : 0;
 
-  // ── Fetch ────────────────────────────────────────────────────────────────
-  const fetchAttendance = async () => {
-    try {
-      setLoading(true);
-      const { data } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("employee_id", employee.id)
-        .order("created_at", { ascending: false });
-      setAttendance(data || []);
-      setLoading(false);
-    } catch (e) {
-      console.log(e);
-      setLoading(false);
-    }
-  };
+  const filteredAttendanceList = useMemo(() => {
+    if (!selectedDate) return attendance;
+    return attendance.filter((rec) => {
+      const recDateStr = new Date(rec.created_at).toISOString().split("T")[0];
+      return recDateStr === selectedDate;
+    });
+  }, [attendance, selectedDate]);
 
-  useEffect(() => {
-    fetchAttendance();
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  // ── Tenure ───────────────────────────────────────────────────────────────
   const tenure = Math.floor(
     (Date.now() - new Date(employee.joining_date).getTime()) /
       (1000 * 60 * 60 * 24 * 30),
   );
 
-  // ── Hero shrink on scroll ────────────────────────────────────────────────
+  // Animators
   const heroScale = scrollY.interpolate({
     inputRange: [0, 120],
     outputRange: [1, 0.92],
@@ -265,37 +307,22 @@ export default function EmployeeDetailsScreen({ route }: any) {
   });
 
   // ── QUICK ACTION HANDLERS ────────────────────────────────────────────────
-
   const handleMessage = async () => {
     try {
-      // Check if we can send SMS
       const phoneNumber = employee.phone_number;
-      if (!phoneNumber) {
-        Alert.alert(
-          "No Phone Number",
-          "This employee doesn't have a phone number on file.",
-        );
-        return;
-      }
-
+      if (!phoneNumber)
+        return Alert.alert("Error", "No phone number configured.");
       const url = `sms:${phoneNumber}`;
-      const supported = await Linking.canOpenURL(url);
-
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert("Error", "Messaging is not supported on this device");
-      }
+      if (await Linking.canOpenURL(url)) await Linking.openURL(url);
     } catch (error) {
-      console.error("Message error:", error);
-      Alert.alert("Error", "Failed to open messaging app");
+      console.error(error);
     }
   };
 
   const handleCall = async () => {
     try {
-      const phoneNumber = employee.phone_number;
-      if (!phoneNumber) {
+      const rawPhoneNumber = employee.phone_number;
+      if (!rawPhoneNumber) {
         Alert.alert(
           "No Phone Number",
           "This employee doesn't have a phone number on file.",
@@ -303,90 +330,78 @@ export default function EmployeeDetailsScreen({ route }: any) {
         return;
       }
 
-      const url = `tel:${phoneNumber}`;
-      const supported = await Linking.canOpenURL(url);
+      const cleanNumber = String(rawPhoneNumber).replace(/[^0-9+]/g, "");
+      const url = `tel:${cleanNumber}`;
 
+      const supported = await Linking.canOpenURL(url);
       if (supported) {
         await Linking.openURL(url);
       } else {
-        Alert.alert("Error", "Phone calls are not supported on this device");
+        Alert.alert(
+          "Dialer Refused",
+          "Direct dialing hooks are unsupported on this device.",
+        );
       }
     } catch (error) {
-      console.error("Call error:", error);
-      Alert.alert("Error", "Failed to open phone app");
+      console.error(error);
     }
   };
 
   const handleReport = async () => {
     try {
-      // Prepare attendance report data
-      const reportData = {
-        employeeName: employee.full_name,
-        employeeId: employee.employee_id,
-        department: employee.department,
-        attendanceRate: `${attendanceRate}%`,
-        totalDays: attendance.length,
-        presentDays: stats.present,
-        lateDays: stats.late,
-        absentDays: stats.absent,
-        leaveDays: stats.on_leave,
-        totalHours: stats.totalHours.toFixed(1),
-        averageHours:
-          attendance.length > 0
-            ? (stats.totalHours / attendance.length).toFixed(1)
-            : "0",
-      };
-
-      const reportText = `
-📊 Attendance Report - ${employee.full_name}
-━━━━━━━━━━━━━━━━━━━━━━━━━
-
-👤 Employee Details:
-• Name: ${reportData.employeeName}
-• ID: ${reportData.employeeId}
-• Department: ${reportData.department}
-
-📈 Statistics:
-• Attendance Rate: ${reportData.attendanceRate}
-• Total Days: ${reportData.totalDays}
-• Present: ${reportData.presentDays}
-• Late: ${reportData.lateDays}
-• Absent: ${reportData.absentDays}
-• Leave: ${reportData.leaveDays}
-
-⏰ Hours:
-• Total Hours: ${reportData.totalHours}h
-• Avg/Day: ${reportData.averageHours}h
-
-Generated: ${new Date().toLocaleDateString()}
-      `;
-
-      await Share.share({
-        message: reportText,
-        title: `Attendance Report - ${employee.full_name}`,
-      });
+      const reportText = `📊 Attendance Report - ${employee.full_name}\nID: ${employee.employee_id}\nRate: ${attendanceRate}%`;
+      await Share.share({ message: reportText, title: `Attendance Report` });
     } catch (error) {
-      console.error("Share error:", error);
-      Alert.alert("Error", "Failed to generate report");
+      console.error(error);
     }
   };
 
   const handleEdit = () => {
-    // Navigate to edit employee screen or show edit modal
+    setOptionsMenuVisible(false);
+    navigation.navigate("EditEmployeeScreen", { employee });
+  };
+
+  // Safe Cascade Delete Engine via Supabase RPC Purge Routine
+  const handleDeleteEmployeePermanently = async () => {
+    setOptionsMenuVisible(false);
+
     Alert.alert(
-      "Edit Employee",
-      "Would you like to edit this employee's details?",
+      "Purge Master Record",
+      `Are you absolutely certain you want to delete ${employee.full_name} permanently? This will safely scrub public records, punch timelines, and remove user authentication lines across auth.users. This process is completely irreversible.`,
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Edit",
-          onPress: () => {
-            // Navigate to edit screen or open edit modal
-            // For now, show info message
-            Alert.alert(
-              "Coming Soon",
-              "Edit functionality will be available soon!",
-            );
+          text: "Delete Permanently",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setLoading(true);
+
+              const { error } = await supabase.rpc("purge_employee_cascade", {
+                target_user_id: employee.id,
+              });
+
+              if (error) throw error;
+
+              Alert.alert(
+                "Purged Successfully",
+                "Master user records completely scrubbed from system registry.",
+                [
+                  {
+                    text: "OK",
+                    onPress: () => navigation.navigate("AdminHomeScreen"),
+                  },
+                ],
+              );
+            } catch (err: any) {
+              console.error(err);
+              Alert.alert(
+                "Purge Failure",
+                err.message ||
+                  "An exception occurred executing database delete functions.",
+              );
+              setLoading(false);
+            }
           },
         },
       ],
@@ -407,10 +422,29 @@ Generated: ${new Date().toLocaleDateString()}
     }
   };
 
+  const handleCalendarPickerPress = () => {
+    setShowDatePicker(true);
+  };
+
+  const onDateChange = (event: any, date?: Date) => {
+    setShowDatePicker(false);
+    if (date) {
+      setPickerDate(date);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      setSelectedDate(`${year}-${month}-${day}`);
+    }
+  };
+
+  const handleLogCardPress = (record: AttendanceRecord) => {
+    setSelectedRecord(record);
+    setDetailsVisible(true);
+  };
+
   // ── OVERVIEW TAB ─────────────────────────────────────────────────────────
   const renderOverview = () => (
     <Animated.View style={{ opacity: fadeAnim }}>
-      {/* Contact card with copy options */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>CONTACT & INFO</Text>
         <View style={styles.glassBlock}>
@@ -459,12 +493,9 @@ Generated: ${new Date().toLocaleDateString()}
         </View>
       </View>
 
-      {/* Attendance snapshot */}
       {!loading && (
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>ATTENDANCE SNAPSHOT</Text>
-
-          {/* Rate bar */}
           <View style={styles.rateCard}>
             <LinearGradient
               colors={["rgba(37,99,235,0.15)", "rgba(37,99,235,0.04)"]}
@@ -507,7 +538,6 @@ Generated: ${new Date().toLocaleDateString()}
             </Text>
           </View>
 
-          {/* Stat pills */}
           <View style={styles.pillsRow}>
             <StatPill
               icon="checkmark-circle"
@@ -538,31 +568,9 @@ Generated: ${new Date().toLocaleDateString()}
               bg="rgba(96,165,250,0.1)"
             />
           </View>
-
-          {/* Avg hours */}
-          <View style={styles.avgHoursCard}>
-            <MaterialCommunityIcons
-              name="clock-fast"
-              size={20}
-              color="#a78bfa"
-            />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.avgHoursLabel}>Avg. Working Hours / Day</Text>
-              <Text style={styles.avgHoursSub}>
-                Calculated from check-in/out records
-              </Text>
-            </View>
-            <Text style={styles.avgHoursValue}>
-              {attendance.length > 0
-                ? (stats.totalHours / attendance.length).toFixed(1)
-                : "—"}
-              h
-            </Text>
-          </View>
         </View>
       )}
 
-      {/* Quick actions - ALL WORKING */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
         <View style={styles.actionsGrid}>
@@ -622,7 +630,6 @@ Generated: ${new Date().toLocaleDateString()}
   // ── ATTENDANCE TAB ────────────────────────────────────────────────────────
   const renderAttendance = () => (
     <Animated.View style={{ opacity: fadeAnim }}>
-      {/* Summary row */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>THIS MONTH</Text>
         <View style={styles.pillsRow}>
@@ -657,41 +664,51 @@ Generated: ${new Date().toLocaleDateString()}
         </View>
       </View>
 
-      {/* Daily log */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>DAILY LOG</Text>
+        <View style={styles.logHeaderControlRow}>
+          <View style={styles.logHeaderLeftBlock}>
+            <Text style={styles.sectionTitleLabel}>Recent Daily Logs</Text>
+            {selectedDate && (
+              <TouchableOpacity
+                style={styles.activeFilterChip}
+                onPress={() => setSelectedDate(null)}
+              >
+                <Text style={styles.activeFilterChipText}>{selectedDate}</Text>
+                <Ionicons name="close-circle" size={12} color="#3b82f6" />
+              </TouchableOpacity>
+            )}
+          </View>
 
-        {attendance.length === 0 ? (
+          <TouchableOpacity
+            style={styles.headerCalendarActionBtn}
+            onPress={handleCalendarPickerPress}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="calendar-sharp" size={18} color="#3b82f6" />
+          </TouchableOpacity>
+        </View>
+
+        {filteredAttendanceList.length === 0 ? (
           <View style={styles.emptyLog}>
             <Ionicons name="calendar-outline" size={32} color="#1e3a5f" />
-            <Text style={styles.emptyLogText}>No attendance records yet</Text>
+            <Text style={styles.emptyLogText}>
+              No attendance records for this view
+            </Text>
           </View>
         ) : (
-          attendance.map((record, index) => {
+          filteredAttendanceList.map((record, index) => {
             const status = getStatus(record);
             const cfg = STATUS_CONFIG[status];
             const hours = workingHours(record);
             const dateObj = new Date(record.created_at);
 
             return (
-              <Animated.View
+              <TouchableOpacity
                 key={record.id ?? index}
-                style={[
-                  styles.logRow,
-                  {
-                    opacity: fadeAnim,
-                    transform: [
-                      {
-                        translateX: fadeAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [20, 0],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
+                activeOpacity={0.75}
+                onPress={() => handleLogCardPress(record)}
+                style={styles.logRow}
               >
-                {/* Date column */}
                 <View style={styles.logDateCol}>
                   <Text style={styles.logDay}>{dateObj.getDate()}</Text>
                   <Text style={styles.logMonth}>
@@ -699,12 +716,11 @@ Generated: ${new Date().toLocaleDateString()}
                   </Text>
                 </View>
 
-                {/* Connector line */}
                 <View style={styles.logConnector}>
                   <View
                     style={[styles.logDot, { backgroundColor: cfg.color }]}
                   />
-                  {index < attendance.length - 1 && (
+                  {index < filteredAttendanceList.length - 1 && (
                     <View
                       style={[
                         styles.logLine,
@@ -714,7 +730,6 @@ Generated: ${new Date().toLocaleDateString()}
                   )}
                 </View>
 
-                {/* Content */}
                 <View
                   style={[styles.logCard, { borderColor: cfg.color + "25" }]}
                 >
@@ -772,7 +787,7 @@ Generated: ${new Date().toLocaleDateString()}
                     )}
                   </View>
                 </View>
-              </Animated.View>
+              </TouchableOpacity>
             );
           })
         )}
@@ -780,12 +795,14 @@ Generated: ${new Date().toLocaleDateString()}
     </Animated.View>
   );
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
+  const modalStatus = selectedRecord ? getStatus(selectedRecord) : "absent";
+  const modalCfg = STATUS_CONFIG[modalStatus];
+  const modalHours = selectedRecord ? workingHours(selectedRecord) : 0;
+
   return (
     <GradientScreen>
       <StatusBar barStyle="light-content" />
       <SafeAreaView style={{ flex: 1 }}>
-        {/* Back button — floats above scroll */}
         <View style={styles.topBar}>
           <TouchableOpacity
             style={styles.backBtn}
@@ -793,174 +810,409 @@ Generated: ${new Date().toLocaleDateString()}
           >
             <Feather name="arrow-left" size={18} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.backBtn}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => setOptionsMenuVisible(true)}
+          >
             <Feather name="more-vertical" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
 
-        <Animated.ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false },
-          )}
-          scrollEventThrottle={16}
-        >
-          {/* ── HERO ──────────────────────────────────────────────────── */}
-          <Animated.View
-            style={[
-              styles.hero,
-              { transform: [{ scale: heroScale }], opacity: heroOpacity },
-            ]}
-          >
-            {/* Glow ring behind avatar */}
-            <View style={[styles.glowRing, { shadowColor: deptColors[1] }]}>
-              {employee.profile_image ? (
-                <Image
-                  source={{ uri: employee.profile_image }}
-                  style={styles.heroAvatar}
-                />
-              ) : (
-                <LinearGradient
-                  colors={deptColors}
-                  style={styles.heroAvatarGradient}
-                >
-                  <Text style={styles.heroInitials}>{initials}</Text>
-                </LinearGradient>
-              )}
-            </View>
-
-            {/* Active pulse */}
-            {employee.is_active && (
-              <View style={styles.heroPulseDot}>
-                <View style={styles.heroPulseInner} />
-              </View>
+        {loading && attendance.length === 0 ? (
+          <View style={styles.loaderCenter}>
+            <ActivityIndicator size="large" color="#3b82f6" />
+            <Text style={styles.loadingText}>Syncing metrics grid…</Text>
+          </View>
+        ) : (
+          <Animated.ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 100 }}
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+              { useNativeDriver: false },
             )}
-
-            <Text style={styles.heroName}>{employee.full_name}</Text>
-            <Text style={[styles.heroDept, { color: deptColors[1] }]}>
-              {employee.department}
-            </Text>
-
-            {/* Tag row */}
-            <View style={styles.heroTagRow}>
-              <View
-                style={[
-                  styles.heroTag,
-                  {
-                    backgroundColor: deptColors[0] + "30",
-                    borderColor: deptColors[0] + "50",
-                  },
-                ]}
-              >
-                <Ionicons name="card-outline" size={10} color={deptColors[1]} />
-                <Text style={[styles.heroTagText, { color: deptColors[1] }]}>
-                  {employee.employee_id}
-                </Text>
+            scrollEventThrottle={16}
+          >
+            {/* Profile Information Block Title */}
+            <Animated.View
+              style={[
+                styles.hero,
+                { transform: [{ scale: heroScale }], opacity: heroOpacity },
+              ]}
+            >
+              <View style={[styles.glowRing, { shadowColor: deptColors[1] }]}>
+                {employee.profile_image ? (
+                  <Image
+                    source={{ uri: employee.profile_image }}
+                    style={styles.heroAvatar}
+                  />
+                ) : (
+                  <LinearGradient
+                    colors={deptColors}
+                    style={styles.heroAvatarGradient}
+                  >
+                    <Text style={styles.heroInitials}>{initials}</Text>
+                  </LinearGradient>
+                )}
               </View>
-              <View
-                style={[
-                  styles.heroTag,
-                  {
-                    backgroundColor: employee.is_active
-                      ? "rgba(74,222,128,0.12)"
-                      : "rgba(248,113,113,0.12)",
-                    borderColor: employee.is_active
-                      ? "rgba(74,222,128,0.3)"
-                      : "rgba(248,113,113,0.3)",
-                  },
-                ]}
-              >
+
+              <Text style={styles.heroName}>{employee.full_name}</Text>
+              <Text style={[styles.heroDept, { color: deptColors[1] }]}>
+                {employee.department}
+              </Text>
+
+              <View style={styles.heroTagRow}>
                 <View
                   style={[
-                    styles.heroPulseDotInline,
+                    styles.heroTag,
                     {
-                      backgroundColor: employee.is_active
-                        ? "#4ade80"
-                        : "#f87171",
+                      backgroundColor: deptColors[0] + "30",
+                      borderColor: deptColors[0] + "50",
                     },
                   ]}
-                />
-                <Text
-                  style={[
-                    styles.heroTagText,
-                    { color: employee.is_active ? "#4ade80" : "#f87171" },
-                  ]}
                 >
-                  {employee.is_active ? "Active" : "Inactive"}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.heroTag,
-                  {
-                    backgroundColor: "rgba(167,139,250,0.12)",
-                    borderColor: "rgba(167,139,250,0.3)",
-                  },
-                ]}
-              >
-                <Ionicons name="time-outline" size={10} color="#a78bfa" />
-                <Text style={[styles.heroTagText, { color: "#a78bfa" }]}>
-                  {tenure}mo tenure
-                </Text>
-              </View>
-            </View>
-          </Animated.View>
-
-          {/* ── TABS ──────────────────────────────────────────────────── */}
-          <View style={styles.tabsWrap}>
-            {(["overview", "attendance"] as const).map((tab) => (
-              <TouchableOpacity
-                key={tab}
-                onPress={() => setActiveTab(tab)}
-                style={[
-                  styles.tabBtn,
-                  activeTab === tab && styles.tabBtnActive,
-                ]}
-                activeOpacity={0.8}
-              >
-                {activeTab === tab && (
-                  <LinearGradient
-                    colors={["#1d4ed8", "#3b82f6"]}
-                    style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
+                  <Ionicons
+                    name="card-outline"
+                    size={10}
+                    color={deptColors[1]}
                   />
-                )}
-                <Ionicons
-                  name={
-                    tab === "overview" ? "person-outline" : "calendar-outline"
-                  }
-                  size={14}
-                  color={activeTab === tab ? "#fff" : "#475569"}
-                />
-                <Text
+                  <Text style={[styles.heroTagText, { color: deptColors[1] }]}>
+                    {employee.employee_id}
+                  </Text>
+                </View>
+                <View
                   style={[
-                    styles.tabText,
-                    activeTab === tab && styles.tabTextActive,
+                    styles.heroTag,
+                    {
+                      backgroundColor: employee.is_active
+                        ? "rgba(74,222,128,0.12)"
+                        : "rgba(248,113,113,0.12)",
+                      borderColor: employee.is_active
+                        ? "rgba(74,222,128,0.3)"
+                        : "rgba(248,113,113,0.3)",
+                    },
                   ]}
                 >
-                  {tab === "overview" ? "Overview" : "Attendance"}
+                  <View
+                    style={[
+                      styles.heroPulseDotInline,
+                      {
+                        backgroundColor: employee.is_active
+                          ? "#4ade80"
+                          : "#f87171",
+                      },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.heroTagText,
+                      { color: employee.is_active ? "#4ade80" : "#f87171" },
+                    ]}
+                  >
+                    {employee.is_active ? "Active" : "Inactive"}
+                  </Text>
+                </View>
+              </View>
+            </Animated.View>
+
+            {/* View Tab Selection row switches */}
+            <View style={styles.tabsWrap}>
+              {(["overview", "attendance"] as const).map((tab) => (
+                <TouchableOpacity
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
+                  style={styles.tabBtn}
+                  activeOpacity={0.8}
+                >
+                  {activeTab === tab && (
+                    <LinearGradient
+                      colors={["#1d4ed8", "#3b82f6"]}
+                      style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                    />
+                  )}
+                  <Ionicons
+                    name={
+                      tab === "overview" ? "person-outline" : "calendar-outline"
+                    }
+                    size={14}
+                    color={activeTab === tab ? "#fff" : "#475569"}
+                  />
+                  <Text
+                    style={[
+                      styles.tabText,
+                      activeTab === tab && styles.tabTextActive,
+                    ]}
+                  >
+                    {tab === "overview" ? "Overview" : "Attendance"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.content}>
+              {activeTab === "overview" ? renderOverview() : renderAttendance()}
+            </View>
+          </Animated.ScrollView>
+        )}
+
+        {/* ── DESIGN 1: CONTEXT REFRESH DROP OPTIONS MENU MODAL ── */}
+        <Modal
+          visible={optionsMenuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setOptionsMenuVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.optionsDropdownModalOverlay}
+            activeOpacity={1}
+            onPress={() => setOptionsMenuVisible(false)}
+          >
+            <View style={styles.optionsGlassContainerWrapper}>
+              <TouchableOpacity
+                style={styles.optionsMenuActionRow}
+                onPress={handleEdit}
+              >
+                <Feather name="edit-2" size={14} color="#e2e8f0" />
+                <Text style={styles.optionsMenuActionText}>
+                  Edit Particulars
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
 
-          {/* ── CONTENT ───────────────────────────────────────────────── */}
-          <View style={styles.content}>
-            {loading ? (
-              <View style={styles.loaderWrap}>
-                <ActivityIndicator size="large" color="#3b82f6" />
-                <Text style={styles.loadingText}>Fetching records…</Text>
+              <View style={styles.optionsRowSplitterDivider} />
+
+              <TouchableOpacity
+                style={styles.optionsMenuActionRow}
+                onPress={handleDeleteEmployeePermanently}
+              >
+                <Ionicons name="trash-outline" size={14} color="#f87171" />
+                <Text style={styles.optionsMenuActionTextDestructive}>
+                  Delete Permanent
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* ── DESIGN 2: BOTTOM SHEET DETAILS VERIFICATION ROW SPLIT CARD SHEET ── */}
+        <Modal
+          visible={detailsVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setDetailsVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={styles.modalDismissArea}
+              activeOpacity={1}
+              onPress={() => setDetailsVisible(false)}
+            />
+
+            <View style={styles.modalContent}>
+              <View style={styles.modalHandle} />
+              <View style={styles.modalHeaderRow}>
+                <Text style={styles.modalHeaderTitle}>Log Verification</Text>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setDetailsVisible(false)}
+                >
+                  <Ionicons name="close" size={22} color="#f1f5f9" />
+                </TouchableOpacity>
               </View>
-            ) : activeTab === "overview" ? (
-              renderOverview()
-            ) : (
-              renderAttendance()
-            )}
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.modalScrollBody}
+              >
+                <View style={styles.detailTargetCard}>
+                  <View style={styles.detailAvatarWrap}>
+                    {employee.profile_image ? (
+                      <Image
+                        source={{ uri: employee.profile_image }}
+                        style={styles.detailProfileImg}
+                      />
+                    ) : (
+                      <View style={styles.detailAvatarFallback}>
+                        <Text style={styles.detailInitials}>{initials}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailFullName}>
+                      {employee.full_name}
+                    </Text>
+                    <Text style={styles.detailDeptText}>
+                      {employee.department}
+                    </Text>
+                    <Text style={styles.detailEmpIdText}>
+                      ID: {employee.employee_id}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.detailBadge,
+                      {
+                        backgroundColor: modalCfg.bg,
+                        borderColor: modalCfg.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.detailBadgeText,
+                        { color: modalCfg.color },
+                      ]}
+                    >
+                      {modalCfg.label}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.detailsSectionHeading}>Activity Logs</Text>
+                <View style={styles.timelineContainer}>
+                  <View style={styles.timelineItem}>
+                    <View
+                      style={[
+                        styles.timelineIconTrack,
+                        {
+                          backgroundColor: selectedRecord?.check_in
+                            ? "rgba(74,222,128,0.15)"
+                            : "rgba(255,255,255,0.05)",
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="log-in"
+                        size={18}
+                        color={selectedRecord?.check_in ? "#4ade80" : "#475569"}
+                      />
+                    </View>
+                    <View style={styles.timelineContentBox}>
+                      <Text style={styles.timelineLabel}>
+                        Check-In Punch Time
+                      </Text>
+                      <Text style={styles.timelineValue}>
+                        {selectedRecord?.check_in
+                          ? formatTime(selectedRecord.check_in)
+                          : "—"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.timelineItem}>
+                    <View
+                      style={[
+                        styles.timelineIconTrack,
+                        {
+                          backgroundColor: selectedRecord?.check_out
+                            ? "rgba(96,165,250,0.15)"
+                            : "rgba(255,255,255,0.05)",
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="log-out"
+                        size={18}
+                        color={
+                          selectedRecord?.check_out ? "#60a5fa" : "#475569"
+                        }
+                      />
+                    </View>
+                    <View style={styles.timelineContentBox}>
+                      <Text style={styles.timelineLabel}>
+                        Check-Out Punch Time
+                      </Text>
+                      <Text style={styles.timelineValue}>
+                        {selectedRecord?.check_out
+                          ? formatTime(selectedRecord.check_out)
+                          : "Not clocked out yet"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {modalHours > 0 && (
+                    <View style={styles.timelineItem}>
+                      <View
+                        style={[
+                          styles.timelineIconTrack,
+                          { backgroundColor: "rgba(167,139,250,0.15)" },
+                        ]}
+                      >
+                        <Ionicons name="time" size={18} color="#a78bfa" />
+                      </View>
+                      <View style={styles.timelineContentBox}>
+                        <Text style={styles.timelineLabel}>
+                          Total Logged Session Duration
+                        </Text>
+                        <Text
+                          style={[styles.timelineValue, { color: "#a78bfa" }]}
+                        >
+                          {modalHours.toFixed(2)} Hours
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                <Text style={styles.detailsSectionHeading}>
+                  Verification Selfies
+                </Text>
+                <View style={styles.selfiesContainer}>
+                  <View style={styles.selfieFrame}>
+                    <Text style={styles.selfieFrameTitle}>
+                      Check-In Capture
+                    </Text>
+                    {selectedRecord?.check_in_selfie ? (
+                      <Image
+                        source={{ uri: selectedRecord.check_in_selfie }}
+                        style={styles.expandedSelfieGraphic}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.emptySelfiePlaceholder}>
+                        <Feather name="camera-off" size={24} color="#334155" />
+                        <Text style={styles.emptySelfieText}>
+                          No check-in selfie
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.selfieFrame}>
+                    <Text style={styles.selfieFrameTitle}>
+                      Check-Out Capture
+                    </Text>
+                    {selectedRecord?.check_out_selfie ? (
+                      <Image
+                        source={{ uri: selectedRecord.check_out_selfie }}
+                        style={styles.expandedSelfieGraphic}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.emptySelfiePlaceholder}>
+                        <Feather name="camera-off" size={24} color="#334155" />
+                        <Text style={styles.emptySelfieText}>
+                          No check-out selfie
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
           </View>
-        </Animated.ScrollView>
+        </Modal>
+
+        {showDatePicker && (
+          <DateTimePicker
+            value={pickerDate}
+            mode="date"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            onChange={onDateChange}
+            maximumDate={new Date()}
+          />
+        )}
       </SafeAreaView>
     </GradientScreen>
   );
@@ -988,8 +1240,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  loaderCenter: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
 
-  // Hero
+  // Hero Identification View styles
   hero: {
     alignItems: "center",
     paddingTop: 80,
@@ -1047,11 +1305,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
     marginBottom: 4,
   },
-  heroDept: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 16,
-  },
+  heroDept: { fontSize: 14, fontWeight: "600", marginBottom: 16 },
   heroTagRow: {
     flexDirection: "row",
     gap: 8,
@@ -1067,17 +1321,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  heroTagText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  heroPulseDotInline: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
+  heroTagText: { fontSize: 11, fontWeight: "700" },
+  heroPulseDotInline: { width: 6, height: 6, borderRadius: 3 },
 
-  // Tabs
+  // Tabs Wrap Layout Config
   tabsWrap: {
     flexDirection: "row",
     marginHorizontal: 20,
@@ -1099,24 +1346,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: "hidden",
   },
-  tabBtnActive: {},
-  tabText: {
-    color: "#475569",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  tabTextActive: {
-    color: "#fff",
-    fontWeight: "700",
-  },
+  tabText: { color: "#475569", fontSize: 13, fontWeight: "600" },
+  tabTextActive: { color: "#fff", fontWeight: "700" },
 
-  // Content
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-
-  // Section
+  content: { paddingHorizontal: 20, paddingTop: 20 },
   section: { marginBottom: 24 },
   sectionLabel: {
     color: "#1d4ed8",
@@ -1126,7 +1359,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  // Glass block
+  // Glass profile layout block
   glassBlock: {
     backgroundColor: "rgba(255,255,255,0.055)",
     borderRadius: 22,
@@ -1167,7 +1400,7 @@ const styles = StyleSheet.create({
     marginLeft: 46,
   },
 
-  // Rate card
+  // Metrics Bar Snapshot Card
   rateCard: {
     borderRadius: 22,
     padding: 18,
@@ -1182,15 +1415,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  rateTitle: {
-    color: "#94a3b8",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  ratePercent: {
-    fontSize: 22,
-    fontWeight: "900",
-  },
+  rateTitle: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
+  ratePercent: { fontSize: 22, fontWeight: "900" },
   rateTrack: {
     height: 8,
     borderRadius: 4,
@@ -1198,21 +1424,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 8,
   },
-  rateFill: {
-    height: 8,
-    borderRadius: 4,
-  },
-  rateSubtext: {
-    color: "#334155",
-    fontSize: 11,
-  },
+  rateFill: { height: 8, borderRadius: 4 },
+  rateSubtext: { color: "#334155", fontSize: 11 },
 
-  // Stat pills
-  pillsRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 14,
-  },
+  pillsRow: { flexDirection: "row", gap: 8, marginBottom: 14 },
   statPill: {
     flex: 1,
     alignItems: "center",
@@ -1221,10 +1436,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
   },
-  statPillValue: {
-    fontSize: 20,
-    fontWeight: "900",
-  },
+  statPillValue: { fontSize: 20, fontWeight: "900" },
   statPillLabel: {
     color: "#475569",
     fontSize: 9,
@@ -1233,25 +1445,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // Avg hours
-  avgHoursCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    borderRadius: 18,
-    backgroundColor: "rgba(167,139,250,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(167,139,250,0.2)",
-  },
-  avgHoursLabel: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
-  avgHoursSub: { color: "#334155", fontSize: 10, marginTop: 2 },
-  avgHoursValue: { color: "#a78bfa", fontSize: 26, fontWeight: "900" },
-
-  // Actions
-  actionsGrid: {
-    flexDirection: "row",
-    gap: 10,
-  },
+  // Quick Actions Layout Styles
+  actionsGrid: { flexDirection: "row", gap: 10 },
   actionCard: {
     flex: 1,
     alignItems: "center",
@@ -1272,50 +1467,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.04)",
   },
-  actionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
+  actionLabel: { fontSize: 11, fontWeight: "700" },
 
-  // Log rows
-  logRow: {
-    flexDirection: "row",
-    marginBottom: 14,
-    alignItems: "flex-start",
-  },
-  logDateCol: {
-    width: 38,
-    alignItems: "center",
-    paddingTop: 14,
-  },
-  logDay: {
-    color: "#f1f5f9",
-    fontSize: 17,
-    fontWeight: "900",
-  },
+  // Log card items components layouts
+  logRow: { flexDirection: "row", marginBottom: 14, alignItems: "flex-start" },
+  logDateCol: { width: 38, alignItems: "center", paddingTop: 14 },
+  logDay: { color: "#f1f5f9", fontSize: 17, fontWeight: "900" },
   logMonth: {
     color: "#475569",
     fontSize: 10,
     fontWeight: "700",
     textTransform: "uppercase",
   },
-  logConnector: {
-    alignItems: "center",
-    width: 20,
-    paddingTop: 18,
-  },
-  logDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginBottom: 4,
-  },
-  logLine: {
-    width: 2,
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 1,
-  },
+  logConnector: { alignItems: "center", width: 20, paddingTop: 18 },
+  logDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 4 },
+  logLine: { width: 2, flex: 1, minHeight: 40, borderRadius: 1 },
   logCard: {
     flex: 1,
     borderRadius: 18,
@@ -1331,11 +1497,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  logWeekday: {
-    color: "#e2e8f0",
-    fontSize: 13,
-    fontWeight: "700",
-  },
+  logWeekday: { color: "#e2e8f0", fontSize: 13, fontWeight: "700" },
   logBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1345,25 +1507,10 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 1,
   },
-  logBadgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-  },
-  logTimes: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  logTimeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  logTimeText: {
-    color: "#64748b",
-    fontSize: 12,
-    fontWeight: "500",
-  },
+  logBadgeText: { fontSize: 10, fontWeight: "800" },
+  logTimes: { flexDirection: "row", alignItems: "center", gap: 8 },
+  logTimeChip: { flexDirection: "row", alignItems: "center", gap: 4 },
+  logTimeText: { color: "#64748b", fontSize: 12, fontWeight: "500" },
   hoursTag: {
     marginLeft: "auto",
     paddingHorizontal: 9,
@@ -1371,30 +1518,242 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: "rgba(167,139,250,0.15)",
   },
-  hoursTagText: {
-    color: "#a78bfa",
-    fontSize: 11,
-    fontWeight: "800",
-  },
+  hoursTagText: { color: "#a78bfa", fontSize: 11, fontWeight: "800" },
 
-  emptyLog: {
+  emptyLog: { alignItems: "center", paddingVertical: 48, gap: 12 },
+  emptyLogText: { color: "#334155", fontSize: 13, fontWeight: "600" },
+  loadingText: { color: "#475569", fontSize: 13 },
+
+  // Modal BottomSheet Specifications
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.85)",
+    justifyContent: "flex-end",
+  },
+  modalDismissArea: { flex: 1 },
+  modalContent: {
+    backgroundColor: "#0f172a",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    maxHeight: height * 0.85,
+    paddingBottom: 40,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  modalHandle: {
+    width: 42,
+    height: 5,
+    backgroundColor: "#334155",
+    borderRadius: 3,
+    alignSelf: "center",
+    marginTop: 12,
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 48,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+  },
+  modalHeaderTitle: { color: "#f1f5f9", fontSize: 18, fontWeight: "800" },
+  modalCloseBtn: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    padding: 6,
+    borderRadius: 12,
+  },
+  modalScrollBody: { paddingHorizontal: 24, paddingTop: 20 },
+  detailTargetCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.03)",
+    padding: 16,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+    marginBottom: 24,
+  },
+  detailAvatarWrap: { marginRight: 16 },
+  detailProfileImg: { width: 64, height: 64, borderRadius: 20 },
+  detailAvatarFallback: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: "#1e293b",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  detailInitials: { color: "#38bdf8", fontSize: 20, fontWeight: "800" },
+  detailFullName: {
+    color: "#f8fafc",
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 2,
+  },
+  detailDeptText: {
+    color: "#38bdf8",
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  detailEmpIdText: { color: "#64748b", fontSize: 11 },
+  detailBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  detailBadgeText: { fontSize: 11, fontWeight: "800" },
+  detailsSectionHeading: {
+    color: "#94a3b8",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    marginBottom: 14,
+  },
+  timelineContainer: {
+    backgroundColor: "rgba(255,255,255,0.02)",
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.04)",
+    marginBottom: 24,
+  },
+  timelineItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  timelineIconTrack: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  timelineContentBox: { flex: 1 },
+  timelineLabel: {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  timelineValue: { color: "#e2e8f0", fontSize: 14, fontWeight: "700" },
+  selfiesContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     gap: 12,
   },
-  emptyLogText: {
-    color: "#334155",
-    fontSize: 13,
-    fontWeight: "600",
+  selfieFrame: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.02)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+    borderRadius: 20,
+    padding: 12,
+    alignItems: "center",
+  },
+  selfieFrameTitle: {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: "700",
+    marginBottom: 10,
+  },
+  expandedSelfieGraphic: {
+    width: "100%",
+    height: 150,
+    borderRadius: 14,
+    backgroundColor: "#020617",
+  },
+  emptySelfiePlaceholder: {
+    width: "100%",
+    height: 150,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.01)",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  emptySelfieText: { color: "#475569", fontSize: 11, fontWeight: "600" },
+
+  // Recent Daily Logs Section Control Styling
+  logHeaderControlRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  logHeaderLeftBlock: { flexDirection: "row", alignItems: "center", gap: 10 },
+  sectionTitleLabel: {
+    color: "#1d4ed8",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+  },
+  activeFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(59,130,246,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  activeFilterChipText: { color: "#3b82f6", fontSize: 10, fontWeight: "700" },
+  headerCalendarActionBtn: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    padding: 8,
+    borderRadius: 12,
   },
 
-  loaderWrap: {
-    alignItems: "center",
-    paddingTop: 60,
-    gap: 14,
+  // Dropdown options
+  optionsDropdownModalOverlay: { flex: 1, backgroundColor: "transparent" },
+  optionsGlassContainerWrapper: {
+    position: "absolute",
+    top: 100,
+    right: 20,
+    backgroundColor: "#1e293b",
+    borderRadius: 18,
+    width: 180,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 16,
   },
-  loadingText: {
-    color: "#475569",
+  optionsMenuActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  optionsMenuActionText: { color: "#f1f5f9", fontSize: 13, fontWeight: "600" },
+  optionsMenuActionTextDestructive: {
+    color: "#f87171",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  optionsRowSplitterDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginVertical: 2,
+    marginHorizontal: 8,
   },
 });

@@ -17,6 +17,7 @@ import EmployeeProfileScreen from "../screens/employee/profile/EmployeeProfileSc
 import EmployeeSettingsScreen from "../screens/employee/settings/EmployeeSettingsScreen";
 
 import { COLORS } from "../constants/colors";
+import EmployeeCalendarScreen from "../screens/employee/calendar/EmployeeCalendarScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -98,7 +99,19 @@ export default function EmployeeTabs() {
           ),
         }}
       />
-
+      <Tab.Screen
+        name="EmployeeCalendarScreen"
+        component={EmployeeCalendarScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabBarIcon
+              focused={focused}
+              icon="calendar-outline"
+              type="Ionicons"
+            />
+          ),
+        }}
+      />
       {/* PROFILE */}
 
       <Tab.Screen

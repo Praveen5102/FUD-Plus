@@ -17,6 +17,7 @@ import ReportsScreen from "../screens/admin/reports/ReportsScreen";
 import AdminSettingsScreen from "../screens/admin/settings/AdminSettingsScreen";
 
 import { APP_COLORS } from "../theme/appTheme";
+import AdminCalendarScreen from "../screens/admin/calendar/AdminCalendarScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -105,6 +106,19 @@ export default function AdminTabs() {
         options={{
           tabBarIcon: ({ focused }) => (
             <TabBarIcon focused={focused} icon="users" type="Feather" />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="AdminCalendarScreen"
+        component={AdminCalendarScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabBarIcon
+              focused={focused}
+              icon="calendar-outline"
+              type="Ionicons"
+            />
           ),
         }}
       />

@@ -5,6 +5,7 @@ export type RootStackParamList = {
   Login: undefined;
   AdminTabs: undefined;
   EmployeeTabs: undefined;
+  EditEmployeeScreen: { employee: any };
 
   // Admin stack screens
   EmployeeDetails: {
