@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-
 import {
   ActivityIndicator,
   Alert,
@@ -13,42 +12,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { LinearGradient } from "expo-linear-gradient";
-
 import { Feather, Ionicons } from "@expo/vector-icons";
-
 import { supabase } from "../../../services/supabase";
-
 import { useAuth } from "../../../context/AuthContext";
 
 export default function EmployeeProfileScreen() {
   const { user } = useAuth();
-
   const [loading, setLoading] = useState(true);
-
   const [profile, setProfile] = useState<any>(null);
-
   const [passwordModal, setPasswordModal] = useState(false);
-
   const [newPassword, setNewPassword] = useState("");
-
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [updating, setUpdating] = useState(false);
-
-  // FETCH PROFILE
 
   const fetchProfile = async () => {
     try {
-      if (!user?.id) {
-        setLoading(false);
-
-        return;
-      }
-
+      if (!user?.id) return;
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -56,21 +37,13 @@ export default function EmployeeProfileScreen() {
         .maybeSingle();
 
       if (error) {
-        console.log(error);
-
         Alert.alert("Profile Error", error.message);
-
-        setLoading(false);
-
         return;
       }
-
       setProfile(data);
-
-      setLoading(false);
     } catch (error) {
       console.log(error);
-
+    } finally {
       setLoading(false);
     }
   };
@@ -79,241 +52,220 @@ export default function EmployeeProfileScreen() {
     fetchProfile();
   }, []);
 
-  // LOGOUT
-
   const handleLogout = async () => {
     try {
       const { error } = await supabase.auth.signOut();
-
       if (error) {
         Alert.alert("Logout Error", error.message);
-
         return;
       }
-
-      Alert.alert("Success", "Logged out successfully.");
     } catch (error) {
-      console.log(error);
-
       Alert.alert("Error", "Logout failed.");
     }
   };
 
-  // PASSWORD UPDATE
-
   const handleChangePassword = async () => {
     if (!newPassword || !confirmPassword) {
       Alert.alert("Missing Fields", "Please fill all fields.");
-
       return;
     }
-
     if (newPassword !== confirmPassword) {
       Alert.alert("Password Mismatch", "Passwords do not match.");
-
       return;
     }
-
     if (newPassword.length < 6) {
       Alert.alert("Weak Password", "Minimum 6 characters required.");
-
       return;
     }
 
     try {
       setUpdating(true);
-
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => {
-          reject(new Error("Request timeout"));
-        }, 10000),
-      );
-
-      const updateRequest = supabase.auth.updateUser({
+      const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
-      const result = (await Promise.race([updateRequest, timeout])) as any;
-
-      if (result.error) {
-        Alert.alert("Error", result.error.message);
-
-        setUpdating(false);
-
+      if (error) {
+        Alert.alert("Error", error.message);
         return;
       }
 
       Alert.alert("Success", "Password updated successfully.");
-
       setPasswordModal(false);
-
       setNewPassword("");
-
       setConfirmPassword("");
-
-      setUpdating(false);
     } catch (error: any) {
-      console.log(error);
-
       Alert.alert("Error", error.message || "Something went wrong.");
-
+    } finally {
       setUpdating(false);
     }
   };
 
-  // LOADER
-
   if (loading) {
     return (
       <LinearGradient
-        colors={["#071226", "#0f1f3d", "#163a72", "#1d4ed8"]}
+        colors={["#030712", "#0b1528", "#11254c", "#1d4ed8"]}
         style={styles.loader}
       >
-        <ActivityIndicator size="large" color="#fff" />
+        <ActivityIndicator size="large" color="#3b82f6" />
       </LinearGradient>
     );
   }
 
+  const displayName = profile?.full_name || "Employee";
+  const initials = displayName
+    .split(" ")
+    .filter(Boolean)
+    .map(() => [0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
-    <>
-      <LinearGradient
-        colors={["#071226", "#0f1f3d", "#163a72", "#1d4ed8"]}
-        style={styles.container}
-      >
-        <StatusBar barStyle="light-content" />
-
-        <SafeAreaView style={styles.safeArea}>
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
-            {/* PROFILE */}
-
-            <View style={styles.profileSection}>
+    <LinearGradient
+      colors={["#030712", "#0b1528", "#11254c", "#1d4ed8"]}
+      style={styles.container}
+    >
+      <StatusBar barStyle="light-content" />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* PROFILE SECTION */}
+          <View style={styles.profileSection}>
+            <View style={styles.avatarContainer}>
               {profile?.profile_image ? (
                 <Image
-                  source={{
-                    uri: profile.profile_image,
-                  }}
+                  source={{ uri: profile.profile_image }}
                   style={styles.profileImage}
                 />
               ) : (
-                <View style={styles.avatar}>
-                  <Ionicons name="person" size={40} color="#fff" />
-                </View>
-              )}
-
-              <Text style={styles.name}>
-                {profile?.full_name || "Employee"}
-              </Text>
-
-              <View style={styles.roleContainer}>
-                <Text style={styles.roleLabel}>
-                  {profile?.role === "admin" ? "Administrator" : "Employee"}
-                </Text>
-              </View>
-            </View>
-
-            {/* DETAILS */}
-
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Employee Details</Text>
-
-              {[
-                {
-                  icon: "mail-outline",
-
-                  label: "Email",
-
-                  value: profile?.email || "--",
-                },
-
-                {
-                  icon: "call-outline",
-
-                  label: "Phone",
-
-                  value: profile?.phone_number || "--",
-                },
-
-                {
-                  icon: "briefcase-outline",
-
-                  label: "Department",
-
-                  value: profile?.department || "--",
-                },
-
-                {
-                  icon: "id-card-outline",
-
-                  label: "Employee ID",
-
-                  value: profile?.employee_id || "--",
-                },
-              ].map((item, index) => (
-                <View key={index} style={styles.infoRow}>
-                  <View style={styles.iconBox}>
-                    <Ionicons name={item.icon as any} size={18} color="#fff" />
-                  </View>
-
-                  <View>
-                    <Text style={styles.infoLabel}>{item.label}</Text>
-
-                    <Text style={styles.infoValue}>{item.value}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-
-            {/* ACTIONS */}
-
-            <View style={styles.card}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.actionRow}
-                onPress={() => setPasswordModal(true)}
-              >
-                <Feather name="lock" size={18} color="#fff" />
-
-                <Text style={styles.actionText}>Change Password</Text>
-              </TouchableOpacity>
-
-              <View style={styles.divider} />
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                style={styles.actionRow}
-                onPress={handleLogout}
-              >
-                <Feather name="log-out" size={18} color="#ef4444" />
-
-                <Text
-                  style={[
-                    styles.actionText,
-                    {
-                      color: "#ef4444",
-                    },
-                  ]}
+                <LinearGradient
+                  colors={["#2563eb", "#3b82f6"]}
+                  style={styles.avatar}
                 >
-                  Logout
-                </Text>
-              </TouchableOpacity>
+                  <Text style={styles.avatarInitials}>{initials}</Text>
+                </LinearGradient>
+              )}
             </View>
-          </ScrollView>
-        </SafeAreaView>
-      </LinearGradient>
+            <Text style={styles.name}>{displayName}</Text>
+            <View style={styles.roleContainer}>
+              <Text style={styles.roleLabel}>
+                {profile?.role === "admin" ? "Administrator" : "Employee"}
+              </Text>
+            </View>
+          </View>
 
-      {/* PASSWORD MODAL */}
+          {/* DETAILS CARD */}
+          <Text style={styles.sectionHeading}>Account Details</Text>
+          <View style={styles.card}>
+            {[
+              {
+                icon: "mail-outline",
+                label: "Email Address",
+                value: profile?.email || "—",
+              },
+              {
+                icon: "call-outline",
+                label: "Phone Connection",
+                value: profile?.phone_number || "—",
+              },
+              {
+                icon: "briefcase-outline",
+                label: "Department Assignment",
+                value: profile?.department || "—",
+              },
+              {
+                icon: "id-card-outline",
+                label: "System Employee ID",
+                value: profile?.employee_id || "—",
+              },
+            ].map((item, index) => (
+              <View
+                key={index}
+                style={[styles.infoRow, index === 3 && { marginBottom: 0 }]}
+              >
+                <View style={styles.iconBox}>
+                  <Ionicons name={item.icon as any} size={16} color="#60a5fa" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.infoLabel}>{item.label}</Text>
+                  <Text style={styles.infoValue} numberOfLines={1}>
+                    {item.value}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
 
-      <Modal visible={passwordModal} transparent animationType="fade">
+          {/* ACTIONS CARD */}
+          <Text style={styles.sectionHeading}>Preferences</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.actionRow}
+              onPress={() => setPasswordModal(true)}
+            >
+              <View
+                style={[
+                  styles.iconBox,
+                  { backgroundColor: "rgba(255,255,255,0.04)" },
+                ]}
+              >
+                <Feather name="lock" size={16} color="#fff" />
+              </View>
+              <Text style={styles.actionText}>Change Passcode</Text>
+              <Feather
+                name="chevron-right"
+                size={16}
+                color="#475569"
+                style={styles.chevronRight}
+              />
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.actionRow}
+              onPress={handleLogout}
+            >
+              <View
+                style={[
+                  styles.iconBox,
+                  { backgroundColor: "rgba(239,68,68,0.1)" },
+                ]}
+              >
+                <Feather name="log-out" size={16} color="#f87171" />
+              </View>
+              <Text style={[styles.actionText, { color: "#f87171" }]}>
+                Sign Out Account
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* PASSWORD UPDATE BOTTOM DIALOG MODAL */}
+      <Modal
+        visible={passwordModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPasswordModal(false)}
+      >
         <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setPasswordModal(false)}
+          />
           <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Change Password</Text>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Update Security Password</Text>
 
             <TextInput
-              placeholder="New Password"
-              placeholderTextColor="#94a3b8"
+              placeholder="Enter New Password"
+              placeholderTextColor="#475569"
               secureTextEntry
               value={newPassword}
               onChangeText={setNewPassword}
@@ -321,8 +273,8 @@ export default function EmployeeProfileScreen() {
             />
 
             <TextInput
-              placeholder="Confirm Password"
-              placeholderTextColor="#94a3b8"
+              placeholder="Confirm New Password"
+              placeholderTextColor="#475569"
               secureTextEntry
               value={confirmPassword}
               onChangeText={setConfirmPassword}
@@ -330,18 +282,18 @@ export default function EmployeeProfileScreen() {
             />
 
             <TouchableOpacity
-              activeOpacity={0.9}
+              activeOpacity={0.8}
               onPress={handleChangePassword}
               disabled={updating}
             >
               <LinearGradient
-                colors={["#2563eb", "#60a5fa"]}
+                colors={["#1d4ed8", "#3b82f6"]}
                 style={styles.updateButton}
               >
                 {updating ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.updateText}>Update Password</Text>
+                  <Text style={styles.updateText}>Confirm Passcode</Text>
                 )}
               </LinearGradient>
             </TouchableOpacity>
@@ -350,261 +302,161 @@ export default function EmployeeProfileScreen() {
               style={styles.cancelButton}
               onPress={() => setPasswordModal(false)}
             >
-              <Text style={styles.cancelText}>Cancel</Text>
+              <Text style={styles.cancelText}>Dismiss</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    </>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: { flex: 1 },
+  loader: { flex: 1, justifyContent: "center", alignItems: "center" },
+  safeArea: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 140 },
+  profileSection: { alignItems: "center", marginBottom: 24 },
+  avatarContainer: {
+    borderWidth: 3,
+    borderColor: "rgba(59,130,246,0.3)",
+    borderRadius: 54,
+    padding: 4,
+    marginBottom: 12,
   },
-
-  loader: {
-    flex: 1,
-
-    justifyContent: "center",
-
-    alignItems: "center",
-  },
-
-  safeArea: {
-    flex: 1,
-  },
-
-  scrollContent: {
-    padding: 20,
-
-    paddingBottom: 120,
-  },
-
-  profileSection: {
-    alignItems: "center",
-
-    marginBottom: 28,
-  },
-
   avatar: {
     width: 90,
     height: 90,
-
     borderRadius: 45,
-
     justifyContent: "center",
-
     alignItems: "center",
-
-    backgroundColor: "rgba(255,255,255,0.10)",
   },
-
-  profileImage: {
-    width: 90,
-    height: 90,
-
-    borderRadius: 45,
-  },
-
-  name: {
+  avatarInitials: {
     color: "#fff",
-
-    fontSize: 24,
-
-    fontWeight: "800",
-
-    marginTop: 14,
+    fontSize: 26,
+    fontWeight: "900",
+    letterSpacing: 1,
   },
-
-  role: {
-    color: "#bfdbfe",
-
-    fontSize: 14,
-
-    marginTop: 6,
-
-    textTransform: "capitalize",
-  },
-
+  profileImage: { width: 90, height: 90, borderRadius: 45 },
+  name: { color: "#f1f5f9", fontSize: 22, fontWeight: "900" },
   roleContainer: {
-    marginTop: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    backgroundColor: "rgba(37, 99, 235, 0.2)",
-    borderRadius: 12,
+    marginTop: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(59,130,246,0.12)",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.2)",
   },
-
   roleLabel: {
     color: "#60a5fa",
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "capitalize",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
-
+  sectionHeading: {
+    color: "#94a3b8",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    marginBottom: 10,
+    marginLeft: 4,
+  },
   card: {
-    padding: 20,
-
+    padding: 16,
     borderRadius: 24,
-
-    marginBottom: 20,
-
-    backgroundColor: "rgba(255,255,255,0.08)",
+    marginBottom: 24,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
   },
-
-  cardTitle: {
-    color: "#fff",
-
-    fontSize: 17,
-
-    fontWeight: "700",
-
-    marginBottom: 20,
-  },
-
-  infoRow: {
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    marginBottom: 18,
-  },
-
+  infoRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   iconBox: {
-    width: 42,
-    height: 42,
-
-    borderRadius: 14,
-
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     justifyContent: "center",
-
     alignItems: "center",
-
     marginRight: 14,
-
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
-
-  infoLabel: {
-    color: "#bfdbfe",
-
-    fontSize: 12,
-  },
-
+  infoLabel: { color: "#64748b", fontSize: 11, fontWeight: "500" },
   infoValue: {
-    color: "#fff",
-
+    color: "#f1f5f9",
     fontSize: 14,
-
     fontWeight: "700",
-
-    marginTop: 4,
+    marginTop: 2,
   },
-
-  actionRow: {
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    paddingVertical: 6,
-  },
-
+  actionRow: { flexDirection: "row", alignItems: "center", paddingVertical: 2 },
   actionText: {
-    color: "#fff",
-
-    fontSize: 15,
-
+    color: "#f1f5f9",
+    fontSize: 14,
     fontWeight: "700",
-
+    flex: 1,
     marginLeft: 14,
   },
-
+  chevronRight: { marginRight: 4 },
   divider: {
     height: 1,
-
-    marginVertical: 18,
-
-    backgroundColor: "rgba(255,255,255,0.08)",
+    marginVertical: 12,
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
-
   modalOverlay: {
     flex: 1,
-
-    justifyContent: "center",
-
-    backgroundColor: "rgba(0,0,0,0.6)",
-
-    padding: 20,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(2,6,23,0.8)",
   },
-
   modalContainer: {
-    borderRadius: 28,
-
-    padding: 22,
-
-    backgroundColor: "#071226",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    paddingBottom: 44,
+    backgroundColor: "#0b1528",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
   },
-
+  modalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: "#334155",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 20,
+  },
   modalTitle: {
     color: "#fff",
-
-    fontSize: 20,
-
-    fontWeight: "800",
-
-    marginBottom: 22,
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 20,
   },
-
   input: {
-    height: 56,
-
-    borderRadius: 18,
-
-    paddingHorizontal: 18,
-
-    marginBottom: 16,
-
-    backgroundColor: "rgba(255,255,255,0.08)",
-
-    color: "#fff",
-  },
-
-  updateButton: {
     height: 54,
-
-    borderRadius: 18,
-
-    justifyContent: "center",
-
-    alignItems: "center",
-  },
-
-  updateText: {
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
     color: "#fff",
-
-    fontSize: 15,
-
-    fontWeight: "700",
+    fontSize: 14,
   },
-
-  cancelButton: {
+  updateButton: {
     height: 52,
-
-    borderRadius: 18,
-
-    marginTop: 12,
-
+    borderRadius: 16,
     justifyContent: "center",
-
     alignItems: "center",
-
-    backgroundColor: "rgba(255,255,255,0.08)",
+    marginTop: 6,
   },
-
-  cancelText: {
-    color: "#dbeafe",
-
-    fontWeight: "700",
+  updateText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  cancelButton: {
+    height: 50,
+    borderRadius: 16,
+    marginTop: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.04)",
   },
+  cancelText: { color: "#94a3b8", fontSize: 14, fontWeight: "700" },
 });

@@ -1,31 +1,24 @@
+// src/navigation/EmployeeTabs.tsx
 import React from "react";
-
-import { View, StyleSheet } from "react-native";
-
+import { View, StyleSheet, Text } from "react-native";
 import { BlurView } from "expo-blur";
-
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-
 import EmployeeHomeScreen from "../screens/employee/home/EmployeeHomeScreen";
-
 import AttendanceHistoryScreen from "../screens/employee/history/AttendanceHistoryScreen";
-
 import EmployeeProfileScreen from "../screens/employee/profile/EmployeeProfileScreen";
-
 import EmployeeSettingsScreen from "../screens/employee/settings/EmployeeSettingsScreen";
-
-import { COLORS } from "../constants/colors";
 import EmployeeCalendarScreen from "../screens/employee/calendar/EmployeeCalendarScreen";
+// ✅ Correct import - adjust path if your file is different
+import EmployeeBroadcastScreen from "../screens/employee/broadcasts/EmployeeBroadcasttScreen";
+import { useUnreadBroadcastsCount } from "../hooks/useBroadcasts";
+import { COLORS } from "../constants/colors";
 
 const Tab = createBottomTabNavigator();
 
-function TabBarIcon({ focused, icon, type }: any) {
+function TabBarIcon({ focused, icon, type, badge }: any) {
   return (
     <View style={[styles.iconContainer, focused && styles.activeIconContainer]}>
-      {/* IONICONS */}
-
       {type === "Ionicons" && (
         <Ionicons
           name={icon}
@@ -33,9 +26,6 @@ function TabBarIcon({ focused, icon, type }: any) {
           color={focused ? COLORS.white : "#dbeafe"}
         />
       )}
-
-      {/* MATERIAL ICONS */}
-
       {type === "MaterialIcons" && (
         <MaterialIcons
           name={icon}
@@ -43,41 +33,38 @@ function TabBarIcon({ focused, icon, type }: any) {
           color={focused ? COLORS.white : "#dbeafe"}
         />
       )}
+      {badge > 0 && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badge > 9 ? "9+" : badge}</Text>
+        </View>
+      )}
     </View>
   );
 }
 
 export default function EmployeeTabs() {
+  const unreadCount = useUnreadBroadcastsCount();
+
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-
         tabBarShowLabel: false,
-
         tabBarStyle: {
           position: "absolute",
-
           bottom: 22,
           left: 20,
           right: 20,
-
           height: 78,
-
           borderTopWidth: 0,
-
           backgroundColor: "transparent",
-
           elevation: 0,
         },
-
         tabBarBackground: () => (
           <BlurView intensity={40} tint="dark" style={styles.blurContainer} />
         ),
       }}
     >
-      {/* HOME */}
-
       <Tab.Screen
         name="Home"
         component={EmployeeHomeScreen}
@@ -87,9 +74,6 @@ export default function EmployeeTabs() {
           ),
         }}
       />
-
-      {/* HISTORY */}
-
       <Tab.Screen
         name="History"
         component={AttendanceHistoryScreen}
@@ -100,7 +84,7 @@ export default function EmployeeTabs() {
         }}
       />
       <Tab.Screen
-        name="EmployeeCalendarScreen"
+        name="Calendar"
         component={EmployeeCalendarScreen}
         options={{
           tabBarIcon: ({ focused }) => (
@@ -112,8 +96,20 @@ export default function EmployeeTabs() {
           ),
         }}
       />
-      {/* PROFILE */}
-
+      <Tab.Screen
+        name="Announcements"
+        component={EmployeeBroadcastScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabBarIcon
+              focused={focused}
+              icon="megaphone-outline"
+              type="Ionicons"
+              badge={unreadCount}
+            />
+          ),
+        }}
+      />
       <Tab.Screen
         name="Profile"
         component={EmployeeProfileScreen}
@@ -127,9 +123,6 @@ export default function EmployeeTabs() {
           ),
         }}
       />
-
-      {/* SETTINGS */}
-
       <Tab.Screen
         name="Settings"
         component={EmployeeSettingsScreen}
@@ -150,46 +143,40 @@ export default function EmployeeTabs() {
 const styles = StyleSheet.create({
   blurContainer: {
     flex: 1,
-
     borderRadius: 30,
-
     overflow: "hidden",
-
     backgroundColor: "rgba(255,255,255,0.08)",
-
     borderWidth: 1,
-
     borderColor: "rgba(255,255,255,0.08)",
   },
-
   iconContainer: {
     width: 52,
     height: 52,
-
     borderRadius: 18,
-
     justifyContent: "center",
     alignItems: "center",
   },
-
   activeIconContainer: {
     backgroundColor: "rgba(96,165,250,0.25)",
-
     borderWidth: 1,
-
     borderColor: "rgba(255,255,255,0.14)",
-
     shadowColor: "#60a5fa",
-
-    shadowOffset: {
-      width: 0,
-      height: 6,
-    },
-
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
-
     shadowRadius: 12,
-
     elevation: 12,
   },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: "#f87171",
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: { color: "white", fontSize: 10, fontWeight: "bold" },
 });

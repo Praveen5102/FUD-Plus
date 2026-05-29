@@ -1,12 +1,17 @@
 // types/navigation.ts
 
+import { Broadcast } from "./broadcast";
+
 export type RootStackParamList = {
   Splash: undefined;
   Login: undefined;
   AdminTabs: undefined;
   EmployeeTabs: undefined;
   EditEmployeeScreen: { employee: any };
-
+  CreateBroadcast: undefined;
+  BroadcastDetails: { broadcast: Broadcast; isAdmin?: boolean };
+  EditBroadcast: { broadcast: Broadcast };
+  Notifications: undefined;
   // Admin stack screens
   EmployeeDetails: {
     employee: {

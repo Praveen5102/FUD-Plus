@@ -28,6 +28,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import GradientScreen from "../../../components/layout/GradientScreen";
 import { APP_COLORS } from "../../../theme/appTheme";
 import { supabase } from "../../../services/supabase";
+import NotificationBell from "../../../components/notifications/NotificationBell";
 
 const { width, height } = Dimensions.get("window");
 
@@ -128,6 +129,11 @@ const ActivityCard = React.memo(
     isPresent,
     index,
     onPress,
+    anonymized = false,
+    displayName,
+    displayDept,
+    displayEmpId,
+    displayProfileImage,
   }: {
     record?: AttendanceRecord;
     employee?: EmployeeProfile;
@@ -138,12 +144,16 @@ const ActivityCard = React.memo(
     empId: string;
     profileImage: string | null;
     onPress: () => void;
+    anonymized?: boolean;
+    displayName: string;
+    displayDept: string;
+    displayEmpId: string;
+    displayProfileImage: string | null;
   }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
-    const selfieUrl = record?.check_in_selfie ?? null;
+    const selfieUrl = !anonymized ? (record?.check_in_selfie ?? null) : null;
     const status = record?.work_status ?? (isPresent ? "Working" : "Absent");
     const cfg = getStatusCfg(status);
-    const profile = record ? resolveProfile(record.profiles) : null;
 
     useEffect(() => {
       Animated.timing(fadeAnim, {
@@ -160,15 +170,29 @@ const ActivityCard = React.memo(
           style={styles.actCardInteractable}
           onPress={onPress}
           activeOpacity={0.7}
+          disabled={anonymized}
         >
           <LinearGradient
             colors={[cfg.bg, "transparent"]}
             style={[StyleSheet.absoluteFill, { borderRadius: 24 }]}
           />
 
-          {/* Selfie / Avatar */}
           <View style={styles.actAvatarWrap}>
-            {selfieUrl ? (
+            {anonymized ? (
+              <LinearGradient
+                colors={["rgba(248,113,113,0.25)", "rgba(248,113,113,0.1)"]}
+                style={styles.actAvatarFallback}
+              >
+                <Text
+                  style={[
+                    styles.actInitials,
+                    { color: "#f87171", fontSize: 28 },
+                  ]}
+                >
+                  ?
+                </Text>
+              </LinearGradient>
+            ) : selfieUrl ? (
               <Image source={{ uri: selfieUrl }} style={styles.actSelfie} />
             ) : (
               <LinearGradient
@@ -176,7 +200,7 @@ const ActivityCard = React.memo(
                 style={styles.actAvatarFallback}
               >
                 <Text style={styles.actInitials}>
-                  {(profile?.full_name ?? "??")
+                  {(displayName !== "?" ? displayName : "??")
                     .split(" ")
                     .map((n: string) => n[0])
                     .join("")
@@ -185,18 +209,23 @@ const ActivityCard = React.memo(
                 </Text>
               </LinearGradient>
             )}
-            {status === "Working" && <View style={styles.actLiveDot} />}
+            {!anonymized && status === "Working" && (
+              <View style={styles.actLiveDot} />
+            )}
           </View>
 
-          {/* Info */}
           <View style={styles.actInfo}>
             <Text style={styles.actName} numberOfLines={1}>
-              {profile?.full_name ?? "—"}
+              {displayName === "?" ? "???" : displayName}
             </Text>
-            <Text style={styles.actDept}>{profile?.department ?? "—"}</Text>
-            <Text style={styles.actId}>{profile?.employee_id ?? "—"}</Text>
+            <Text style={styles.actDept}>
+              {displayDept === "?" ? "———" : displayDept}
+            </Text>
+            <Text style={styles.actId}>
+              {displayEmpId === "?" ? "———" : displayEmpId}
+            </Text>
 
-            {isPresent && record?.check_in && (
+            {!anonymized && isPresent && record?.check_in && (
               <View style={styles.actTimesRow}>
                 <View style={styles.actTimeChip}>
                   <Ionicons name="log-in-outline" size={10} color="#64748b" />
@@ -230,7 +259,6 @@ const ActivityCard = React.memo(
             )}
           </View>
 
-          {/* Status badge */}
           <View
             style={[
               styles.actStatusBadge,
@@ -238,7 +266,7 @@ const ActivityCard = React.memo(
             ]}
           >
             <Text style={[styles.actStatusText, { color: cfg.color }]}>
-              {cfg.label}
+              {anonymized ? "Absent" : cfg.label}
             </Text>
           </View>
         </TouchableOpacity>
@@ -336,6 +364,9 @@ export default function AdminHomeScreen() {
   const [selectedEmployee, setSelectedEmployee] =
     useState<EmployeeProfile | null>(null);
   const [detailsVisible, setDetailsVisible] = useState(false);
+
+  // TODO: wire to real unread count from your notifications system
+  const unreadNotifCount = 0;
 
   const realtimeRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const fetchingRef = useRef(false);
@@ -565,18 +596,8 @@ export default function AdminHomeScreen() {
             <Text style={styles.headerTitle}>Overview</Text>
             <Text style={styles.headerDate}>{todayStr}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.exportTopBtn}
-            onPress={exportAttendance}
-            activeOpacity={0.85}
-          >
-            <LinearGradient
-              colors={["#1d4ed8", "#3b82f6"]}
-              style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
-            />
-            <Feather name="download" size={15} color="#fff" />
-            <Text style={styles.exportTopText}>Export</Text>
-          </TouchableOpacity>
+          {/* Notification bell replaces the old export button in the header */}
+          <NotificationBell unreadCount={unreadNotifCount} />
         </View>
 
         {loading ? (
@@ -585,198 +606,233 @@ export default function AdminHomeScreen() {
             <Text style={styles.loaderText}>Loading dashboard…</Text>
           </View>
         ) : (
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scroll}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor="#60a5fa"
-              />
-            }
-          >
-            {/* ── STAT CARDS ──────────────────────────────────────── */}
-            <View style={styles.statsGrid}>
-              <StatCard
-                value={employees.length}
-                label="Total"
-                color="#60a5fa"
-                icon="people-outline"
-                active={activeTab === "all"}
-                onPress={() => setActiveTab("all")}
-                index={0}
-              />
-              <StatCard
-                value={stats.present}
-                label="Present"
-                color="#4ade80"
-                icon="checkmark-circle"
-                active={activeTab === "present"}
-                onPress={() => setActiveTab("present")}
-                index={1}
-              />
-              <StatCard
-                value={stats.absent}
-                label="Absent"
-                color="#f87171"
-                icon="close-circle-outline"
-                active={activeTab === "absent"}
-                onPress={() => setActiveTab("absent")}
-                index={2}
-              />
-              <StatCard
-                value={`${stats.rate}%`}
-                label="Rate"
-                color="#a78bfa"
-                icon="trending-up"
-                active={false}
-                onPress={() => {}}
-                index={3}
-              />
-            </View>
+          <>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.scroll}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor="#60a5fa"
+                />
+              }
+            >
+              {/* ── STAT CARDS ──────────────────────────────────────── */}
+              <View style={styles.statsGrid}>
+                <StatCard
+                  value={employees.length}
+                  label="Total"
+                  color="#60a5fa"
+                  icon="people-outline"
+                  active={activeTab === "all"}
+                  onPress={() => setActiveTab("all")}
+                  index={0}
+                />
+                <StatCard
+                  value={stats.present}
+                  label="Present"
+                  color="#4ade80"
+                  icon="checkmark-circle"
+                  active={activeTab === "present"}
+                  onPress={() => setActiveTab("present")}
+                  index={1}
+                />
+                <StatCard
+                  value={stats.absent}
+                  label="Absent"
+                  color="#f87171"
+                  icon="close-circle-outline"
+                  active={activeTab === "absent"}
+                  onPress={() => setActiveTab("absent")}
+                  index={2}
+                />
+                <StatCard
+                  value={`${stats.rate}%`}
+                  label="Rate"
+                  color="#a78bfa"
+                  icon="trending-up"
+                  active={false}
+                  onPress={() => {}}
+                  index={3}
+                />
+              </View>
 
-            {/* ── RATE BAR ────────────────────────────────────────── */}
-            <View style={styles.rateCard}>
-              <LinearGradient
-                colors={["rgba(37,99,235,0.15)", "rgba(37,99,235,0.04)"]}
-                style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-              />
-              <View style={styles.rateRow}>
-                <Text style={styles.rateLabel}>Today's Attendance Rate</Text>
-                <Text
-                  style={[
-                    styles.rateValue,
-                    {
-                      color:
-                        stats.rate >= 85
-                          ? "#4ade80"
-                          : stats.rate >= 70
-                            ? "#fbbf24"
-                            : "#f87171",
-                    },
-                  ]}
-                >
-                  {stats.rate}%
+              {/* ── RATE BAR ────────────────────────────────────────── */}
+              <View style={styles.rateCard}>
+                <LinearGradient
+                  colors={["rgba(37,99,235,0.15)", "rgba(37,99,235,0.04)"]}
+                  style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                />
+                <View style={styles.rateRow}>
+                  <Text style={styles.rateLabel}>Today's Attendance Rate</Text>
+                  <Text
+                    style={[
+                      styles.rateValue,
+                      {
+                        color:
+                          stats.rate >= 85
+                            ? "#4ade80"
+                            : stats.rate >= 70
+                              ? "#fbbf24"
+                              : "#f87171",
+                      },
+                    ]}
+                  >
+                    {stats.rate}%
+                  </Text>
+                </View>
+                <View style={styles.rateTrack}>
+                  <LinearGradient
+                    colors={
+                      stats.rate >= 85
+                        ? ["#059669", "#4ade80"]
+                        : stats.rate >= 70
+                          ? ["#d97706", "#fbbf24"]
+                          : ["#dc2626", "#f87171"]
+                    }
+                    style={[styles.rateFill, { width: `${stats.rate}%` }]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  />
+                </View>
+                <Text style={styles.rateSubtext}>
+                  {stats.present} present · {stats.late} late · {stats.absent}{" "}
+                  absent
                 </Text>
               </View>
-              <View style={styles.rateTrack}>
+
+              {/* ── TAB PILLS ───────────────────────────────────────── */}
+              <View style={styles.tabRow}>
+                {TABS.map((t) => (
+                  <TouchableOpacity
+                    key={t.key}
+                    style={[
+                      styles.tabPill,
+                      activeTab === t.key && { borderColor: t.color + "50" },
+                    ]}
+                    onPress={() => setActiveTab(t.key)}
+                    activeOpacity={0.8}
+                  >
+                    {activeTab === t.key && (
+                      <LinearGradient
+                        colors={[t.color + "25", t.color + "0a"]}
+                        style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.tabPillText,
+                        activeTab === t.key && { color: t.color },
+                      ]}
+                    >
+                      {t.label}
+                    </Text>
+                    <View
+                      style={[
+                        styles.tabPillCount,
+                        { backgroundColor: t.color + "20" },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.tabPillCountText, { color: t.color }]}
+                      >
+                        {t.count}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* ── SECTION TITLE ───────────────────────────────────── */}
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>
+                  {activeTab === "all"
+                    ? "All Employees"
+                    : activeTab === "present"
+                      ? "Present Today"
+                      : activeTab === "absent"
+                        ? "Absent Today"
+                        : "Late Today"}
+                </Text>
+                <View style={styles.realtimeBadge}>
+                  <View style={styles.realtimeDot} />
+                  <Text style={styles.realtimeText}>Live</Text>
+                </View>
+              </View>
+
+              {/* ── EMPLOYEE LIST ── */}
+              {filteredList.length === 0 ? (
+                <View style={styles.emptyWrap}>
+                  <Ionicons name="people-outline" size={40} color="#1e3a5f" />
+                  <Text style={styles.emptyText}>
+                    No employees in this category
+                  </Text>
+                </View>
+              ) : (
+                filteredList.map((emp, index) => {
+                  const rec = attnByEmpId[emp.id];
+                  const isPresent = presentIds.has(emp.id);
+                  const shouldAnonymize = false;
+
+                  const displayName = emp.full_name;
+                  const displayDept = emp.department;
+                  const displayEmpId = emp.employee_id;
+                  const displayProfileImage = emp.profile_image;
+
+                  return (
+                    <ActivityCard
+                      key={emp.id}
+                      record={
+                        rec
+                          ? {
+                              ...rec,
+                              profiles: {
+                                full_name: emp.full_name,
+                                department: emp.department,
+                                employee_id: emp.employee_id,
+                                profile_image: emp.profile_image,
+                              },
+                            }
+                          : undefined
+                      }
+                      employee={emp}
+                      isPresent={isPresent}
+                      index={index}
+                      name={displayName}
+                      dept={displayDept}
+                      empId={displayEmpId}
+                      profileImage={displayProfileImage}
+                      onPress={() => handleCardPress(emp, rec)}
+                      anonymized={shouldAnonymize}
+                      displayName={displayName}
+                      displayDept={displayDept}
+                      displayEmpId={displayEmpId}
+                      displayProfileImage={displayProfileImage}
+                    />
+                  );
+                })
+              )}
+            </ScrollView>
+
+            {/* ── EXPORT BUTTON — FIXED BOTTOM BAR ─────────────────── */}
+            <View style={styles.exportBarWrapper}>
+              <TouchableOpacity
+                style={styles.exportBarBtn}
+                onPress={exportAttendance}
+                activeOpacity={0.85}
+              >
                 <LinearGradient
-                  colors={
-                    stats.rate >= 85
-                      ? ["#059669", "#4ade80"]
-                      : stats.rate >= 70
-                        ? ["#d97706", "#fbbf24"]
-                        : ["#dc2626", "#f87171"]
-                  }
-                  style={[styles.rateFill, { width: `${stats.rate}%` }]}
+                  colors={["#1d4ed8", "#3b82f6"]}
+                  style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                 />
-              </View>
-              <Text style={styles.rateSubtext}>
-                {stats.present} present · {stats.late} late · {stats.absent}{" "}
-                absent
-              </Text>
+                <Feather name="download" size={17} color="#fff" />
+                <Text style={styles.exportBarText}>Export Attendance</Text>
+              </TouchableOpacity>
             </View>
-
-            {/* ── TAB PILLS ───────────────────────────────────────── */}
-            <View style={styles.tabRow}>
-              {TABS.map((t) => (
-                <TouchableOpacity
-                  key={t.key}
-                  style={[
-                    styles.tabPill,
-                    activeTab === t.key && { borderColor: t.color + "50" },
-                  ]}
-                  onPress={() => setActiveTab(t.key)}
-                  activeOpacity={0.8}
-                >
-                  {activeTab === t.key && (
-                    <LinearGradient
-                      colors={[t.color + "25", t.color + "0a"]}
-                      style={[StyleSheet.absoluteFill, { borderRadius: 20 }]}
-                    />
-                  )}
-                  <Text
-                    style={[
-                      styles.tabPillText,
-                      activeTab === t.key && { color: t.color },
-                    ]}
-                  >
-                    {t.label}
-                  </Text>
-                  <View
-                    style={[
-                      styles.tabPillCount,
-                      { backgroundColor: t.color + "20" },
-                    ]}
-                  >
-                    <Text style={[styles.tabPillCountText, { color: t.color }]}>
-                      {t.count}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* ── SECTION TITLE ───────────────────────────────────── */}
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>
-                {activeTab === "all"
-                  ? "All Employees"
-                  : activeTab === "present"
-                    ? "Present Today"
-                    : activeTab === "absent"
-                      ? "Absent Today"
-                      : "Late Today"}
-              </Text>
-              <View style={styles.realtimeBadge}>
-                <View style={styles.realtimeDot} />
-                <Text style={styles.realtimeText}>Live</Text>
-              </View>
-            </View>
-
-            {/* ── EMPLOYEE LIST ────────────────────────────────────── */}
-            {filteredList.length === 0 ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="people-outline" size={40} color="#1e3a5f" />
-                <Text style={styles.emptyText}>
-                  No employees in this category
-                </Text>
-              </View>
-            ) : (
-              filteredList.map((emp, index) => {
-                const rec = attnByEmpId[emp.id];
-                return (
-                  <ActivityCard
-                    key={emp.id}
-                    record={
-                      rec
-                        ? {
-                            ...rec,
-                            profiles: {
-                              full_name: emp.full_name,
-                              department: emp.department,
-                              employee_id: emp.employee_id,
-                              profile_image: emp.profile_image,
-                            },
-                          }
-                        : undefined
-                    }
-                    employee={emp}
-                    isPresent={presentIds.has(emp.id)}
-                    index={index}
-                    name={emp.full_name}
-                    dept={emp.department}
-                    empId={emp.employee_id}
-                    profileImage={emp.profile_image}
-                    onPress={() => handleCardPress(emp, rec)}
-                  />
-                );
-              })
-            )}
-          </ScrollView>
+          </>
         )}
 
         {/* ── DETAILED ATTENDANCE MODAL (BOTTOM SHEET STYLE) ──────── */}
@@ -787,7 +843,6 @@ export default function AdminHomeScreen() {
           onRequestClose={() => setDetailsVisible(false)}
         >
           <View style={styles.modalOverlay}>
-            {/* Backdrop Dismiss Target */}
             <TouchableOpacity
               style={styles.modalDismissArea}
               activeOpacity={1}
@@ -795,10 +850,8 @@ export default function AdminHomeScreen() {
             />
 
             <View style={styles.modalContent}>
-              {/* Top notch indicator */}
               <View style={styles.modalHandle} />
 
-              {/* Modal Header */}
               <View style={styles.modalHeaderRow}>
                 <Text style={styles.modalHeaderTitle}>Employee Details</Text>
                 <TouchableOpacity
@@ -814,7 +867,6 @@ export default function AdminHomeScreen() {
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.modalScrollBody}
                 >
-                  {/* Employee Info Identification Header Card */}
                   <View style={styles.detailTargetCard}>
                     <View style={styles.detailAvatarWrap}>
                       {selectedEmployee.profile_image ? (
@@ -867,13 +919,11 @@ export default function AdminHomeScreen() {
                     </View>
                   </View>
 
-                  {/* Operational Clock Timeline */}
                   <Text style={styles.detailsSectionHeading}>
                     Activity Logs
                   </Text>
 
                   <View style={styles.timelineContainer}>
-                    {/* Log Box: Check In */}
                     <View style={styles.timelineItem}>
                       <View
                         style={[
@@ -905,7 +955,6 @@ export default function AdminHomeScreen() {
                       </View>
                     </View>
 
-                    {/* Log Box: Check Out */}
                     <View style={styles.timelineItem}>
                       <View
                         style={[
@@ -937,7 +986,6 @@ export default function AdminHomeScreen() {
                       </View>
                     </View>
 
-                    {/* Total Work Metrics */}
                     {selectedRecord?.total_work_hours != null && (
                       <View style={styles.timelineItem}>
                         <View
@@ -962,13 +1010,11 @@ export default function AdminHomeScreen() {
                     )}
                   </View>
 
-                  {/* Verification Selfies Media Group */}
                   <Text style={styles.detailsSectionHeading}>
                     Verification Selfies
                   </Text>
 
                   <View style={styles.selfiesContainer}>
-                    {/* Check In Frame */}
                     <View style={styles.selfieFrame}>
                       <Text style={styles.selfieFrameTitle}>
                         Check-In Capture
@@ -993,7 +1039,6 @@ export default function AdminHomeScreen() {
                       )}
                     </View>
 
-                    {/* Check Out Frame */}
                     <View style={styles.selfieFrame}>
                       <Text style={styles.selfieFrameTitle}>
                         Check-Out Capture
@@ -1031,7 +1076,7 @@ export default function AdminHomeScreen() {
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: 18, paddingBottom: 130 },
+  scroll: { paddingHorizontal: 18, paddingBottom: 110 },
 
   // Header
   header: {
@@ -1056,17 +1101,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   headerDate: { color: "#475569", fontSize: 12, marginTop: 3 },
-  exportTopBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-    overflow: "hidden",
-    marginTop: 4,
-  },
-  exportTopText: { color: "#fff", fontSize: 12, fontWeight: "700" },
 
   loaderWrap: {
     flex: 1,
@@ -1263,6 +1297,30 @@ const styles = StyleSheet.create({
   // Empty
   emptyWrap: { alignItems: "center", paddingTop: 60, gap: 12 },
   emptyText: { color: "#334155", fontSize: 13, fontWeight: "600" },
+
+  // Export bottom bar
+  exportBarWrapper: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(2,6,23,0.6)",
+  },
+  exportBarBtn: {
+    height: 52,
+    borderRadius: 18,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    overflow: "hidden",
+  },
+  exportBarText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
 
   // Modal BottomSheet Specifications
   modalOverlay: {
