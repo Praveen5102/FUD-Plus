@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-
 import {
   ActivityIndicator,
   Alert,
@@ -12,14 +11,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
 import * as ImagePicker from "expo-image-picker";
 import * as Clipboard from "expo-clipboard";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../services/supabase";
-import { adminSupabase } from "../../services/adminSupabase";
 
 interface Props {
   visible: boolean;
@@ -51,11 +48,8 @@ export default function AddEmployeeModal({
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [generatedPassword, setGeneratedPassword] = useState("");
-
-  // Password card is completely separate from the form modal
   const [showPasswordCard, setShowPasswordCard] = useState(false);
 
-  // PASSWORD GENERATOR
   const generatePassword = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     let password = "";
@@ -65,11 +59,13 @@ export default function AddEmployeeModal({
     return password;
   };
 
-  // IMAGE PICKER
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (permission.status !== "granted") {
-      Alert.alert("Permission Required");
+      Alert.alert(
+        "Permission Required",
+        "This application requires media storage permissions.",
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -83,13 +79,11 @@ export default function AddEmployeeModal({
     }
   };
 
-  // COPY PASSWORD
   const copyPassword = async () => {
     await Clipboard.setStringAsync(generatedPassword);
     Alert.alert("Copied", "Password copied successfully.");
   };
 
-  // RESET FORM
   const resetForm = () => {
     setFullName("");
     setEmployeeId("");
@@ -100,7 +94,6 @@ export default function AddEmployeeModal({
     setJoiningDate(new Date());
   };
 
-  // CREATE EMPLOYEE
   const handleCreateEmployee = async () => {
     if (loading) return;
 
@@ -111,187 +104,85 @@ export default function AddEmployeeModal({
 
     try {
       setLoading(true);
-
-      // CHECK: email already in profiles
-      const { data: existingProfile } = await adminSupabase
-        .from("profiles")
-        .select("id, email")
-        .eq("email", email.trim())
-        .maybeSingle();
-
-      if (existingProfile) {
-        Alert.alert(
-          "User Exists",
-          "An employee with this email already exists.",
-        );
-        setLoading(false);
-        return;
-      }
-
-      // CHECK: employee ID already used
-      const { data: existingEmployee } = await adminSupabase
-        .from("profiles")
-        .select("id, employee_id")
-        .eq("employee_id", employeeId.trim())
-        .maybeSingle();
-
-      if (existingEmployee) {
-        Alert.alert(
-          "Duplicate Employee ID",
-          "This Employee ID is already in use.",
-        );
-        setLoading(false);
-        return;
-      }
-
-      // GENERATE PASSWORD early so we have it ready
       const password = generatePassword();
 
-      // IMAGE UPLOAD
-      // Uses ArrayBuffer instead of Blob — Blob conversion fails silently
-      // in React Native / Expo. ArrayBuffer is the reliable approach.
       let uploadedImage = null;
       if (profileImage) {
         try {
-          console.log("Starting image upload from URI:", profileImage);
-
           const response = await fetch(profileImage);
           const arrayBuffer = await response.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
           const fileName = `employee_${Date.now()}.jpg`;
 
-          console.log(
-            "Uploading image:",
-            fileName,
-            "size:",
-            uint8Array.length,
-            "bytes",
-          );
-
           const { data: uploadData, error: uploadError } =
-            await adminSupabase.storage
+            await supabase.storage
               .from("employee-images")
               .upload(fileName, uint8Array, {
                 contentType: "image/jpeg",
                 upsert: false,
               });
 
-          if (uploadError) {
-            console.log("Image upload error:", uploadError.message);
-            console.log(
-              "Image upload error details:",
-              JSON.stringify(uploadError),
-            );
-          } else {
-            console.log("Upload success, path:", uploadData?.path);
-            const { data: urlData } = adminSupabase.storage
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage
               .from("employee-images")
               .getPublicUrl(fileName);
             uploadedImage = urlData.publicUrl;
-            console.log("Image public URL:", uploadedImage);
           }
-        } catch (err: any) {
-          console.log("Image upload exception:", err?.message || err);
+        } catch (err) {
+          console.log("Image upload failure cascade:", err);
         }
       }
 
-      // CREATE AUTH USER
-      const { data: authData, error: authError } =
-        await adminSupabase.auth.admin.createUser({
-          email: email.trim(),
-          password,
-          email_confirm: true,
-        });
-
-      if (authError) {
-        if (authError.message?.includes("already exists")) {
-          Alert.alert(
-            "User Exists",
-            "This email is already registered in the system.",
-          );
-        } else {
-          Alert.alert(
-            "Auth Error",
-            authError.message || "Could not create user.",
-          );
-        }
-        setLoading(false);
-        return;
-      }
-
-      if (!authData?.user?.id) {
-        Alert.alert("Error", "User created but no ID returned.");
-        setLoading(false);
-        return;
-      }
-
-      // UPSERT PROFILE
-      // Trigger auto-creates a row with just id+email the moment createUser runs.
-      // upsert with onConflict:"id" fills in all the remaining fields safely.
-      const { error: profileError } = await adminSupabase
-        .from("profiles")
-        .upsert(
-          {
-            id: authData.user.id,
-            employee_id: employeeId.trim(),
+      // Intercept and route via Create Employee Edge Function
+      const { data, error } = await supabase.functions.invoke(
+        "create-employee",
+        {
+          body: {
             full_name: fullName.trim(),
+            employee_id: employeeId.trim(),
             email: email.trim(),
-            role: "employee",
+            phone_number: phoneNumber.trim(),
             department,
             joining_date: joiningDate.toISOString(),
-            phone_number: phoneNumber.trim(),
             profile_image: uploadedImage,
+            password,
           },
-          { onConflict: "id" },
-        );
+        },
+      );
 
-      if (profileError) {
-        console.log("Profile upsert error:", profileError);
-        Alert.alert(
-          "Database Error",
-          profileError.message || "Failed to save employee profile.",
-        );
+      if (error || (data && data.success === false)) {
+        const errorMsg =
+          error?.message || data?.error || "Failed to finalize employee setup.";
+        Alert.alert("Registration Error", errorMsg);
         setLoading(false);
         return;
       }
 
-      // ✅ SUCCESS — do these in the right order:
-
-      // 1. Store the password BEFORE closing anything
       setGeneratedPassword(password);
-
-      // 2. Reset and close the form
       resetForm();
       onClose();
-
-      // 3. Show the password card (it's independent of the form modal)
       setShowPasswordCard(true);
 
-      // 4. Refresh the employee list in the background
       setTimeout(async () => {
         try {
           await onEmployeeCreated();
         } catch (err) {
-          console.log("List refresh error:", err);
+          console.log("Refresh handling error:", err);
         }
       }, 300);
-
-      setLoading(false);
     } catch (error: any) {
-      console.log("Unexpected error:", error);
-      setLoading(false);
       Alert.alert("Error", error.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <>
-      {/* ─── FORM MODAL ─── */}
       <Modal visible={visible} transparent animationType="slide">
         <View style={styles.overlay}>
           <View style={styles.container}>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* HEADER */}
               <View style={styles.header}>
                 <Text style={styles.title}>Add Employee</Text>
                 <TouchableOpacity onPress={onClose}>
@@ -299,7 +190,6 @@ export default function AddEmployeeModal({
                 </TouchableOpacity>
               </View>
 
-              {/* PROFILE IMAGE */}
               <TouchableOpacity style={styles.imagePicker} onPress={pickImage}>
                 {profileImage ? (
                   <Image
@@ -314,7 +204,6 @@ export default function AddEmployeeModal({
                 )}
               </TouchableOpacity>
 
-              {/* INPUTS */}
               <TextInput
                 placeholder="Full Name"
                 placeholderTextColor="#94a3b8"
@@ -347,7 +236,6 @@ export default function AddEmployeeModal({
                 style={styles.input}
               />
 
-              {/* DATE PICKER */}
               <TouchableOpacity
                 style={styles.dateButton}
                 onPress={() => setShowDatePicker(true)}
@@ -356,6 +244,7 @@ export default function AddEmployeeModal({
                   Joining: {joiningDate.toDateString()}
                 </Text>
               </TouchableOpacity>
+
               {showDatePicker && (
                 <DateTimePicker
                   value={joiningDate}
@@ -368,7 +257,6 @@ export default function AddEmployeeModal({
                 />
               )}
 
-              {/* DEPARTMENT */}
               <Text style={styles.departmentTitle}>Department</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {departments.map((item) => (
@@ -392,7 +280,6 @@ export default function AddEmployeeModal({
                 ))}
               </ScrollView>
 
-              {/* SUBMIT */}
               <TouchableOpacity
                 disabled={loading}
                 activeOpacity={loading ? 1 : 0.8}
@@ -419,22 +306,17 @@ export default function AddEmployeeModal({
         </View>
       </Modal>
 
-      {/* ─── PASSWORD CARD MODAL ─── */}
-      {/* Completely separate from the form — renders independently */}
       <Modal visible={showPasswordCard} transparent animationType="fade">
         <View style={styles.passwordOverlay}>
           <View style={styles.passwordContainer}>
             <Ionicons name="shield-checkmark" size={60} color="#60a5fa" />
-
             <Text style={styles.passwordTitle}>Employee Created!</Text>
             <Text style={styles.passwordSubtitle}>
               Share this temporary password with the employee.
             </Text>
-
             <View style={styles.passwordBox}>
               <Text style={styles.passwordText}>{generatedPassword}</Text>
             </View>
-
             <TouchableOpacity onPress={copyPassword}>
               <LinearGradient
                 colors={["#2563eb", "#60a5fa"]}
@@ -444,7 +326,6 @@ export default function AddEmployeeModal({
                 <Text style={styles.copyButtonText}>Copy Password</Text>
               </LinearGradient>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.doneButton}
               onPress={() => setShowPasswordCard(false)}
@@ -477,11 +358,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
-  title: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "800",
-  },
+  title: { color: "#fff", fontSize: 22, fontWeight: "800" },
   imagePicker: {
     height: 130,
     borderRadius: 24,
@@ -490,15 +367,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-  uploadText: {
-    color: "#dbeafe",
-    marginTop: 10,
-  },
-  profileImage: {
-    width: 130,
-    height: 130,
-    borderRadius: 24,
-  },
+  uploadText: { color: "#dbeafe", marginTop: 10 },
+  profileImage: { width: 130, height: 130, borderRadius: 24 },
   input: {
     height: 56,
     borderRadius: 18,
@@ -515,14 +385,8 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-  dateText: {
-    color: "#fff",
-  },
-  departmentTitle: {
-    color: "#fff",
-    fontWeight: "700",
-    marginBottom: 12,
-  },
+  dateText: { color: "#fff" },
+  departmentTitle: { color: "#fff", fontWeight: "700", marginBottom: 12 },
   departmentButton: {
     paddingHorizontal: 18,
     paddingVertical: 12,
@@ -530,15 +394,9 @@ const styles = StyleSheet.create({
     marginRight: 10,
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-  activeDepartment: {
-    backgroundColor: "rgba(37,99,235,0.35)",
-  },
-  departmentText: {
-    color: "#cbd5e1",
-  },
-  activeDepartmentText: {
-    color: "#fff",
-  },
+  activeDepartment: { backgroundColor: "rgba(37,99,235,0.35)" },
+  departmentText: { color: "#cbd5e1" },
+  activeDepartmentText: { color: "#fff" },
   createButton: {
     height: 58,
     borderRadius: 18,
@@ -546,16 +404,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  createButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-
-  // PASSWORD CARD
+  buttonDisabled: { opacity: 0.6 },
+  createButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
   passwordOverlay: {
     flex: 1,
     justifyContent: "center",
@@ -605,11 +455,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 24,
   },
-  copyButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    marginLeft: 8,
-  },
+  copyButtonText: { color: "#fff", fontWeight: "700", marginLeft: 8 },
   doneButton: {
     width: "100%",
     height: 50,
@@ -619,8 +465,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.06)",
   },
-  doneText: {
-    color: "#dbeafe",
-    fontWeight: "700",
-  },
+  doneText: { color: "#dbeafe", fontWeight: "700" },
 });

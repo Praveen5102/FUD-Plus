@@ -21,9 +21,7 @@ import AppHeader from "../../../components/ui/AppHeader";
 import { APP_COLORS } from "../../../theme/appTheme";
 import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../services/supabase";
-import { adminSupabase } from "../../../services/adminSupabase";
 
-// TYPES
 type RowItem =
   | {
       type: "toggle";
@@ -49,12 +47,10 @@ interface StatItem {
   color: string;
   icon: string;
 }
-
 interface OfficeConfig {
   location: string;
   radius: number;
 }
-
 interface Employee {
   id: string;
   full_name: string;
@@ -74,23 +70,17 @@ export default function AdminSettingsScreen() {
     location: "Hyderabad HQ",
     radius: 150,
   });
-
-  // Notification States
   const [toggles, setToggles] = useState<Record<string, boolean>>({
     pushNotif: true,
     emailAlerts: false,
   });
 
-  // Action Loading States
   const [checkingDatabase, setCheckingDatabase] = useState(false);
-
-  // PASSWORD MODAL
   const [passwordModal, setPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [updatingPassword, setUpdatingPassword] = useState(false);
 
-  // RESET EMPLOYEE PASSWORD MODAL
   const [resetModal, setResetModal] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(
     null,
@@ -101,14 +91,12 @@ export default function AdminSettingsScreen() {
   const [generatedResetPw, setGeneratedResetPw] = useState("");
   const [showResetPwCard, setShowResetPwCard] = useState(false);
 
-  // ADMIN ACCESS MODAL
   const [adminModal, setAdminModal] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [updatingRole, setUpdatingRole] = useState<string | null>(null);
   const [roleSearch, setRoleSearch] = useState("");
 
-  // FETCH PROFILE
   const fetchProfile = async () => {
     try {
       if (!user?.id) return;
@@ -117,35 +105,26 @@ export default function AdminSettingsScreen() {
         .select("*")
         .eq("id", user.id)
         .maybeSingle();
-      if (error) {
-        console.log(error);
-        return;
-      }
-      setProfile(data);
+      if (!error) setProfile(data);
     } catch (error) {
       console.log(error);
     }
   };
 
-  // FETCH DASHBOARD
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-
       const { count: employeeCount } = await supabase
         .from("profiles")
         .select("*", { count: "exact", head: true })
         .eq("role", "employee");
-
       const { data: depts } = await supabase
         .from("profiles")
         .select("department")
         .eq("role", "employee");
-
       const uniqueDepts = new Set(
         depts?.map((d: any) => d.department).filter(Boolean),
       );
-
       const today = new Date().toISOString().split("T")[0];
       const { data: attendance } = await supabase
         .from("attendance")
@@ -185,47 +164,34 @@ export default function AdminSettingsScreen() {
     }
   };
 
-  // FETCH ALL USERS FOR ROLE MANAGEMENT
   const fetchAllUsers = async () => {
     try {
       setLoadingEmployees(true);
-      const { data, error } = await adminSupabase
+      const { data, error } = await supabase
         .from("profiles")
         .select("id, full_name, email, employee_id, department, role")
         .neq("id", user?.id)
         .order("full_name", { ascending: true });
-
-      if (error) {
-        console.log(error);
-        setLoadingEmployees(false);
-        return;
-      }
-      setEmployees(data || []);
-      setLoadingEmployees(false);
+      if (!error) setEmployees(data || []);
     } catch (error) {
       console.log(error);
+    } finally {
       setLoadingEmployees(false);
     }
   };
 
-  // TOGGLE
   const flipToggle = (key: string) =>
     setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  // TEST DATABASE LINK
   const handleVerifyDatabase = async () => {
     try {
       setCheckingDatabase(true);
       const startTime = Date.now();
       const { error } = await supabase.from("profiles").select("id").limit(1);
-      const duration = Date.now() - startTime;
-
       if (error) throw error;
-
       Alert.alert(
         "Connection Secure",
-        `Supabase Cluster Node is fully functional.\nResponse latency: ${duration}ms\nSSL Certificate: Valid`,
-        [{ text: "Acknowledge", style: "default" }],
+        `Supabase Cluster Node response latency: ${Date.now() - startTime}ms`,
       );
     } catch (err: any) {
       Alert.alert(
@@ -237,16 +203,13 @@ export default function AdminSettingsScreen() {
     }
   };
 
-  // APPLICATION SPECS CARD
   const handleShowVersionSpecs = () => {
     Alert.alert(
       "System Specifications",
-      "Application: FUD Plus\nEnvironment: Production\nBuild Signature: FUD-PROD-9842\nBundle Version: 1.0.0 (Expo SDK 51)",
-      [{ text: "Dismiss", style: "cancel" }],
+      "Application: FUD Plus\nEnvironment: Production\nBuild Signature: FUD-PROD-9842\nBundle Version: 1.0.0",
     );
   };
 
-  // CHANGE ADMIN PASSWORD
   const handleChangePassword = async () => {
     if (!newPassword || !confirmPassword) {
       Alert.alert("Missing Fields", "Please fill all fields.");
@@ -256,71 +219,58 @@ export default function AdminSettingsScreen() {
       Alert.alert("Mismatch", "Passwords do not match.");
       return;
     }
-    if (newPassword.length < 6) {
-      Alert.alert("Weak Password", "Minimum 6 characters required.");
-      return;
-    }
     try {
       setUpdatingPassword(true);
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
-      if (error) {
-        Alert.alert("Error", error.message);
-        setUpdatingPassword(false);
-        return;
-      }
+      if (error) throw error;
       Alert.alert("Success", "Password updated successfully.");
       setPasswordModal(false);
       setNewPassword("");
       setConfirmPassword("");
-      setUpdatingPassword(false);
     } catch (error: any) {
       Alert.alert("Error", error.message || "Something went wrong.");
+    } finally {
       setUpdatingPassword(false);
     }
   };
 
-  // PROMOTE / DEMOTE
+  // Re-routed through updating-role Edge Function
   const handleRoleChange = async (emp: Employee) => {
-    const isAdmin = emp.role === "admin";
-    const newRole = isAdmin ? "employee" : "admin";
-    const actionLabel = isAdmin ? "demote to Employee" : "promote to Admin";
-
+    const nextRole = emp.role === "admin" ? "employee" : "admin";
     Alert.alert(
       "Confirm Role Change",
-      `Are you sure you want to ${actionLabel} ${emp.full_name}?`,
+      `Are you sure you want to shift ${emp.full_name} to ${nextRole}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Confirm",
-          style: isAdmin ? "destructive" : "default",
           onPress: async () => {
             try {
               setUpdatingRole(emp.id);
-              const { error } = await adminSupabase
-                .from("profiles")
-                .update({ role: newRole })
-                .eq("id", emp.id);
+              const { data, error } = await supabase.functions.invoke(
+                "update-role",
+                {
+                  body: { userId: emp.id, role: nextRole },
+                },
+              );
 
-              if (error) {
-                Alert.alert("Error", error.message);
-                setUpdatingRole(null);
-                return;
+              if (error || (data && data.success === false)) {
+                throw new Error(
+                  error?.message || data?.error || "Edge logic rejection.",
+                );
               }
 
               setEmployees((prev) =>
                 prev.map((e) =>
-                  e.id === emp.id ? { ...e, role: newRole } : e,
+                  e.id === emp.id ? { ...e, role: nextRole } : e,
                 ),
               );
-              setUpdatingRole(null);
-              Alert.alert(
-                "Success",
-                `${emp.full_name} has been ${isAdmin ? "demoted to Employee" : "promoted to Admin"}.`,
-              );
+              Alert.alert("Success", "Security context state synced.");
             } catch (error: any) {
-              Alert.alert("Error", error.message || "Role update failed.");
+              Alert.alert("Error", error.message || "Role change failed.");
+            } finally {
               setUpdatingRole(null);
             }
           },
@@ -329,12 +279,44 @@ export default function AdminSettingsScreen() {
     );
   };
 
-  const generatePassword = () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    let pw = "";
-    for (let i = 0; i < 8; i++)
-      pw += chars.charAt(Math.floor(Math.random() * chars.length));
-    return pw;
+  // Re-routed through resetting-password Edge Function
+  const handleResetEmployeePassword = async () => {
+    if (!resetPassword || !resetConfirm) {
+      Alert.alert(
+        "Missing Fields",
+        "Please populate all passcode constraints.",
+      );
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      Alert.alert("Mismatch", "Passwords do not match.");
+      return;
+    }
+    if (!selectedEmployee) return;
+
+    try {
+      setResettingPassword(true);
+      const { data, error } = await supabase.functions.invoke(
+        "reset-password",
+        {
+          body: { userId: selectedEmployee.id, password: resetPassword },
+        },
+      );
+
+      if (error || (data && data.success === false)) {
+        throw new Error(
+          error?.message || data?.error || "Edge function decryption error.",
+        );
+      }
+
+      setGeneratedResetPw(resetPassword);
+      setResetModal(false);
+      setShowResetPwCard(true);
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Something went wrong.");
+    } finally {
+      setResettingPassword(false);
+    }
   };
 
   const openResetModal = (emp: Employee) => {
@@ -346,58 +328,29 @@ export default function AdminSettingsScreen() {
   };
 
   const handleAutoGenerate = () => {
-    const pw = generatePassword();
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let pw = "";
+    for (let i = 0; i < 8; i++)
+      pw += chars.charAt(Math.floor(Math.random() * chars.length));
     setResetPassword(pw);
     setResetConfirm(pw);
   };
 
-  const handleResetEmployeePassword = async () => {
-    if (!resetPassword || !resetConfirm) {
-      Alert.alert("Missing Fields", "Please fill all fields.");
-      return;
-    }
-    if (resetPassword !== resetConfirm) {
-      Alert.alert("Mismatch", "Passwords do not match.");
-      return;
-    }
-    if (resetPassword.length < 6) {
-      Alert.alert("Weak Password", "Minimum 6 characters required.");
-      return;
-    }
-    if (!selectedEmployee) return;
-    try {
-      setResettingPassword(true);
-      const { error } = await adminSupabase.auth.admin.updateUserById(
-        selectedEmployee.id,
-        { password: resetPassword },
-      );
-      if (error) {
-        Alert.alert("Error", error.message);
-        setResettingPassword(false);
-        return;
-      }
-      setGeneratedResetPw(resetPassword);
-      setResetModal(false);
-      setShowResetPwCard(true);
-      setResettingPassword(false);
-    } catch (error: any) {
-      Alert.alert("Error", error.message || "Something went wrong.");
-      setResettingPassword(false);
-    }
-  };
-
   const handleLogout = () => {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          const { error } = await supabase.auth.signOut();
-          if (error) Alert.alert("Error", error.message);
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to close this terminal session?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: async () => {
+            await supabase.auth.signOut();
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const openAdminModal = () => {
@@ -405,7 +358,6 @@ export default function AdminSettingsScreen() {
     fetchAllUsers();
   };
 
-  // SETTINGS SECTIONS
   const SETTINGS_SECTIONS: { title: string; items: RowItem[] }[] = [
     {
       title: "Notification Controls",
@@ -424,7 +376,7 @@ export default function AdminSettingsScreen() {
           icon: "mail",
           color: "#10b981",
           label: "Automated Email Reports",
-          sub: "Forward monthly synchronization overviews to management",
+          sub: "Forward monthly overviews to management",
         },
       ],
     },
@@ -436,7 +388,7 @@ export default function AdminSettingsScreen() {
           icon: "lock",
           color: "#f59e0b",
           label: "Change Password",
-          sub: "Update your system administrator passcode credentials",
+          sub: "Update admin passcode credentials",
           onPress: () => setPasswordModal(true),
         },
         {
@@ -444,7 +396,7 @@ export default function AdminSettingsScreen() {
           icon: "shield",
           color: "#a78bfa",
           label: "Admin Management Node",
-          sub: "Promote system employees or adjust permissions",
+          sub: "Adjust system staff access bounds",
           onPress: openAdminModal,
         },
       ],
@@ -458,8 +410,8 @@ export default function AdminSettingsScreen() {
           color: "#ec4899",
           label: "Database Connection Node",
           sub: checkingDatabase
-            ? "Testing link node latency..."
-            : "Verify current Supabase server infrastructure",
+            ? "Testing link latency..."
+            : "Verify current Supabase server framework",
           onPress: handleVerifyDatabase,
         },
         {
@@ -467,7 +419,7 @@ export default function AdminSettingsScreen() {
           icon: "info",
           color: "#14b8a6",
           label: "Application Blueprint Profile",
-          sub: "FUD Plus · Production v1.0.0 Spec Suite",
+          sub: "FUD Plus · Production Spec Suite",
           onPress: handleShowVersionSpecs,
         },
       ],
@@ -486,19 +438,6 @@ export default function AdminSettingsScreen() {
       e.department?.toLowerCase().includes(roleSearch.toLowerCase()),
   );
 
-  if (loading) {
-    return (
-      <GradientScreen>
-        <SafeAreaView style={styles.loaderWrap}>
-          <ActivityIndicator size="large" color="#3b82f6" />
-          <Text style={{ color: "#64748b", marginTop: 14, fontWeight: "600" }}>
-            Loading system configuration...
-          </Text>
-        </SafeAreaView>
-      </GradientScreen>
-    );
-  }
-
   return (
     <>
       <GradientScreen>
@@ -509,8 +448,6 @@ export default function AdminSettingsScreen() {
             contentContainerStyle={styles.content}
           >
             <AppHeader title="Settings" subtitle="Admin Controls" />
-
-            {/* PROFILE CARD */}
             <View style={styles.profileCard}>
               <LinearGradient
                 colors={["rgba(59,130,246,0.15)", "rgba(59,130,246,0.02)"]}
@@ -539,7 +476,6 @@ export default function AdminSettingsScreen() {
               </View>
             </View>
 
-            {/* STATS ROW */}
             <View style={styles.statsRow}>
               {stats.map((item, index) => (
                 <View key={index} style={styles.statCard}>
@@ -567,7 +503,6 @@ export default function AdminSettingsScreen() {
               ))}
             </View>
 
-            {/* OFFICE CONFIGURATION */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Office Workspace Profile</Text>
               <View style={styles.officeRow}>
@@ -587,7 +522,6 @@ export default function AdminSettingsScreen() {
               </View>
             </View>
 
-            {/* SETTINGS LAYER CONFIGURATION */}
             {SETTINGS_SECTIONS.map((section, si) => (
               <View key={si}>
                 <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -611,7 +545,6 @@ export default function AdminSettingsScreen() {
               </View>
             ))}
 
-            {/* SECURE SIGNOUT ANCHOR TRIGGER */}
             <TouchableOpacity
               activeOpacity={0.8}
               style={styles.logoutBtn}
@@ -628,7 +561,6 @@ export default function AdminSettingsScreen() {
               />
             </TouchableOpacity>
 
-            {/* FOOTER METADATA BLOCK */}
             <View style={styles.footer}>
               <Text style={styles.footerText}>
                 FUD Plus Enterprise Cloud Core
@@ -641,7 +573,7 @@ export default function AdminSettingsScreen() {
         </SafeAreaView>
       </GradientScreen>
 
-      {/* ─── CHANGE PASSWORD DIALOG MODAL ─── */}
+      {/* CHANGE PASSWORD MODAL */}
       <Modal
         visible={passwordModal}
         transparent
@@ -668,11 +600,10 @@ export default function AdminSettingsScreen() {
                 <Ionicons name="close" size={22} color="#475569" />
               </TouchableOpacity>
             </View>
-
             <Text style={styles.modalSub}>
-              Adjust secure keys for master administrator account access
+              Adjust security configurations for default administrative log
+              vectors
             </Text>
-
             <TextInput
               placeholder="New Root Passcode"
               placeholderTextColor="#475569"
@@ -689,7 +620,6 @@ export default function AdminSettingsScreen() {
               onChangeText={setConfirmPassword}
               style={styles.input}
             />
-
             <TouchableOpacity
               activeOpacity={0.9}
               disabled={updatingPassword}
@@ -702,14 +632,9 @@ export default function AdminSettingsScreen() {
                 <Text style={styles.primaryBtnText}>Re-key Passcode</Text>
               )}
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.cancelBtn}
-              onPress={() => {
-                setPasswordModal(false);
-                setNewPassword("");
-                setConfirmPassword("");
-              }}
+              onPress={() => setPasswordModal(false)}
             >
               <Text style={styles.cancelBtnText}>Dismiss</Text>
             </TouchableOpacity>
@@ -717,7 +642,7 @@ export default function AdminSettingsScreen() {
         </View>
       </Modal>
 
-      {/* ─── ADMIN ACCESS MANAGEMENT OVERLAY ─── */}
+      {/* ADMIN REPOSITORY OVERLAY */}
       <Modal
         visible={adminModal}
         transparent
@@ -744,10 +669,9 @@ export default function AdminSettingsScreen() {
               </TouchableOpacity>
             </View>
             <Text style={styles.modalSub}>
-              Adjust node privileges or override employee security access
-              metrics
+              Adjust node privileges or handle structural administrative role
+              updates
             </Text>
-
             <View style={styles.searchBox}>
               <Feather name="search" size={15} color="#475569" />
               <TextInput
@@ -768,20 +692,15 @@ export default function AdminSettingsScreen() {
                 data={filteredEmployees}
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
-                style={{ flex: 1 }}
                 contentContainerStyle={{ paddingBottom: 30 }}
                 ListEmptyComponent={
                   <View style={styles.emptyWrap}>
-                    <Ionicons name="people-outline" size={40} color="#334155" />
-                    <Text style={styles.emptyText}>
-                      No matches found in staff repository
-                    </Text>
+                    <Text style={styles.emptyText}>No matches found.</Text>
                   </View>
                 }
                 renderItem={({ item }) => {
                   const isAdmin = item.role === "admin";
                   const isUpdating = updatingRole === item.id;
-
                   return (
                     <View style={styles.userCard}>
                       <View
@@ -790,18 +709,6 @@ export default function AdminSettingsScreen() {
                           isAdmin && styles.userAvatarAdmin,
                         ]}
                       >
-                        {!isAdmin && (
-                          <LinearGradient
-                            colors={["rgba(255,255,255,0.05)", "transparent"]}
-                            style={StyleSheet.absoluteFill}
-                          />
-                        )}
-                        {isAdmin && (
-                          <LinearGradient
-                            colors={["rgba(59,130,246,0.2)", "transparent"]}
-                            style={StyleSheet.absoluteFill}
-                          />
-                        )}
                         <Text
                           style={[
                             styles.userAvatarText,
@@ -811,7 +718,6 @@ export default function AdminSettingsScreen() {
                           {(item.full_name?.[0] || "?").toUpperCase()}
                         </Text>
                       </View>
-
                       <View style={styles.userInfo}>
                         <Text style={styles.userName}>{item.full_name}</Text>
                         <Text style={styles.userDept}>
@@ -835,7 +741,6 @@ export default function AdminSettingsScreen() {
                           </Text>
                         </View>
                       </View>
-
                       <View style={styles.cardActions}>
                         <TouchableOpacity
                           disabled={isUpdating}
@@ -850,27 +755,15 @@ export default function AdminSettingsScreen() {
                           {isUpdating ? (
                             <ActivityIndicator size="small" color="#fff" />
                           ) : (
-                            <>
-                              <Ionicons
-                                name={
-                                  isAdmin
-                                    ? "arrow-down-circle-outline"
-                                    : "arrow-up-circle-outline"
-                                }
-                                size={12}
-                                color="#fff"
-                              />
-                              <Text style={styles.roleBtnText}>
-                                {isAdmin ? "Demote" : "Promote"}
-                              </Text>
-                            </>
+                            <Text style={styles.roleBtnText}>
+                              {isAdmin ? "Demote" : "Promote"}
+                            </Text>
                           )}
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => openResetModal(item)}
                           style={styles.roleBtnReset}
                         >
-                          <Ionicons name="key-outline" size={12} color="#fff" />
                           <Text style={styles.roleBtnText}>Reset PW</Text>
                         </TouchableOpacity>
                       </View>
@@ -883,7 +776,7 @@ export default function AdminSettingsScreen() {
         </View>
       </Modal>
 
-      {/* ─── RESET EMPLOYEE PASSWORD DIALOG ─── */}
+      {/* OVERRIDE ACCOUNT PASSCODE */}
       <Modal
         visible={resetModal}
         transparent
@@ -899,12 +792,9 @@ export default function AdminSettingsScreen() {
               </TouchableOpacity>
             </View>
             <Text style={styles.modalSub}>
-              Configuring encryption key sequence for{" "}
-              <Text style={{ color: "#fff", fontWeight: "800" }}>
-                {selectedEmployee?.full_name}
-              </Text>
+              Inverting system password structures for:{" "}
+              {selectedEmployee?.full_name}
             </Text>
-
             <TextInput
               placeholder="Inject New Access Passcode"
               placeholderTextColor="#475569"
@@ -914,24 +804,19 @@ export default function AdminSettingsScreen() {
               style={styles.input}
             />
             <TextInput
-              placeholder="Confirm Access Passcode Verification"
+              placeholder="Confirm Passcode Verification"
               placeholderTextColor="#475569"
               secureTextEntry
               value={resetConfirm}
               onChangeText={setResetConfirm}
               style={styles.input}
             />
-
             <TouchableOpacity
               style={styles.generateBtn}
               onPress={handleAutoGenerate}
             >
-              <Ionicons name="shuffle-outline" size={15} color="#60a5fa" />
-              <Text style={styles.generateBtnText}>
-                Auto-compute dynamic passcode
-              </Text>
+              <Text style={styles.generateBtnText}>Auto-compute passcode</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               activeOpacity={0.9}
               disabled={resettingPassword}
@@ -946,18 +831,17 @@ export default function AdminSettingsScreen() {
                 </Text>
               )}
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.cancelBtn}
               onPress={() => setResetModal(false)}
             >
-              <Text style={styles.cancelBtnText}>Dismiss Action</Text>
+              <Text style={styles.cancelBtnText}>Dismiss</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ─── RESET SUCCESS DISPLAY OVERLAY CARD ─── */}
+      {/* RESET SUCCESS OVERLAY */}
       <Modal visible={showResetPwCard} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
@@ -972,25 +856,15 @@ export default function AdminSettingsScreen() {
             >
               Passcode Re-computed!
             </Text>
-            <Text
-              style={[styles.modalSub, { textAlign: "center", marginTop: 4 }]}
-            >
-              Secure credentials updated for {selectedEmployee?.full_name}
-            </Text>
-
             <View style={styles.pwBox}>
               <Text style={styles.pwText}>{generatedResetPw}</Text>
             </View>
-
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={async () => {
                 const Clipboard = await import("expo-clipboard");
                 await Clipboard.setStringAsync(generatedResetPw);
-                Alert.alert(
-                  "Copied Structure",
-                  "Credentials captured to system clipboard buffer.",
-                );
+                Alert.alert("Copied Structure", "Credentials cached.");
               }}
             >
               <Text style={styles.primaryBtnText}>Copy Token Key</Text>
@@ -1008,7 +882,6 @@ export default function AdminSettingsScreen() {
   );
 }
 
-// COMPONENT: SETTING ROW
 function SettingRow({
   item,
   isLast,
@@ -1021,14 +894,12 @@ function SettingRow({
   onToggle?: () => void;
 }) {
   const isDanger = item.type === "nav" && item.danger;
-  const onPress = item.type === "nav" ? item.onPress : undefined;
-
   return (
     <>
       <TouchableOpacity
         activeOpacity={0.85}
         style={styles.settingRow}
-        onPress={onPress}
+        onPress={item.type === "nav" ? item.onPress : undefined}
         disabled={item.type === "toggle"}
       >
         <View style={[styles.iconBox, { backgroundColor: item.color + "12" }]}>
@@ -1061,7 +932,6 @@ function SettingRow({
   );
 }
 
-// ARCHITECTURAL DESIGN SPECIFICATIONS STYLING BLOCK
 const GLASS = {
   backgroundColor: "rgba(255,255,255,0.03)",
   borderWidth: 1,
@@ -1072,7 +942,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 120 },
   loaderWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
-
   profileCard: {
     ...GLASS,
     borderRadius: 24,
@@ -1119,7 +988,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginLeft: 4,
   },
-
   statsRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
   statCard: {
     ...GLASS,
@@ -1144,7 +1012,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 6,
   },
-
   card: { ...GLASS, borderRadius: 24, padding: 16, marginBottom: 20 },
   cardTitle: {
     color: APP_COLORS.white,
@@ -1152,7 +1019,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginBottom: 14,
   },
-
   officeRow: { flexDirection: "row", alignItems: "center" },
   officeBox: { flex: 1, alignItems: "center" },
   officeDivider: {
@@ -1172,7 +1038,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: "500",
   },
-
   sectionTitle: {
     color: "#64748b",
     fontSize: 11,
@@ -1207,7 +1072,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.04)",
     marginVertical: 12,
   },
-
   logoutBtn: {
     ...GLASS,
     borderRadius: 20,
@@ -1232,7 +1096,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginLeft: 12,
   },
-
   footer: { alignItems: "center", paddingTop: 10 },
   footerText: { color: "#334155", fontSize: 11, fontWeight: "700" },
   footerVersion: {
@@ -1241,8 +1104,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: "500",
   },
-
-  // DIALOG CONFIGURATION SPECIFICATIONS
   modalOverlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -1308,8 +1169,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.04)",
   },
   cancelBtnText: { color: "#94a3b8", fontSize: 14, fontWeight: "700" },
-
-  // BACKEND OVERLAY SHEET
   adminOverlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -1343,8 +1202,6 @@ const styles = StyleSheet.create({
   },
   emptyWrap: { alignItems: "center", paddingTop: 80, gap: 12 },
   emptyText: { color: "#475569", fontSize: 13, fontWeight: "600" },
-
-  // STAFF CARDS REPOSITORY
   userCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1398,10 +1255,7 @@ const styles = StyleSheet.create({
   },
   roleBtnPromote: { backgroundColor: "#2563eb" },
   roleBtnDemote: { backgroundColor: "rgba(239,68,68,0.2)" },
-
-  // FIXED: Added missing style mapping token block safely inside stylesheet container
   roleBtnText: { color: "#fff", fontSize: 11, fontWeight: "800" },
-
   roleBtnReset: {
     flexDirection: "row",
     alignItems: "center",

@@ -2,8 +2,8 @@ import "react-native-url-polyfill/auto";
 
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = "https://vzwpetlduiwdvyndpgym.supabase.co";
+const supabaseUrl = process.env.SUPABASE_URL;
 
-const supabaseAnonKey = "sb_publishable_05UL4CzC-uY0a7PCaotieA_iQ5o4eTg";
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
